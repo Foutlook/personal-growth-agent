@@ -14,6 +14,7 @@ from personal_growth_agent.interactive import (
     run_interactive,
 )
 from personal_growth_agent.interactive_tools import ToolContext, execute_tool, list_tool_names
+from personal_growth_agent.utils import utc_now_iso
 from personal_growth_agent.wiki import init_llm_wiki
 
 
@@ -204,7 +205,7 @@ class InteractiveReplTests(unittest.TestCase):
                 os.environ.pop("PGA_DEEPSEEK_API_KEY", None)
             else:
                 os.environ["PGA_DEEPSEEK_API_KEY"] = old_key
-        log_path = self.workspace / "conversations" / "2026-05-18" / "chat-session.jsonl"
+        log_path = self.workspace / "conversations" / utc_now_iso()[:10] / "chat-session.jsonl"
         records = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
 
         self.assertEqual(code, 0)
@@ -360,7 +361,7 @@ class InteractiveReplTests(unittest.TestCase):
             else:
                 os.environ["PGA_DEEPSEEK_API_KEY"] = old_key
         joined = "\n".join(outputs)
-        log_path = self.workspace / "conversations" / "2026-05-18" / "empty-tool-delta.jsonl"
+        log_path = self.workspace / "conversations" / utc_now_iso()[:10] / "empty-tool-delta.jsonl"
         records = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
 
         self.assertIn("[tool:get_latest_report] ok", joined)
@@ -492,7 +493,7 @@ class InteractiveReplTests(unittest.TestCase):
                 os.environ.pop("PGA_DEEPSEEK_API_KEY", None)
             else:
                 os.environ["PGA_DEEPSEEK_API_KEY"] = old_key
-        log_path = self.workspace / "conversations" / "2026-05-18" / "duplicate-tool.jsonl"
+        log_path = self.workspace / "conversations" / utc_now_iso()[:10] / "duplicate-tool.jsonl"
         records = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
         tool_results = [record for record in records if record["type"] == "tool_result"]
 

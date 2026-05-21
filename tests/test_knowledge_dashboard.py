@@ -5,12 +5,16 @@ import unittest
 from pathlib import Path
 
 from personal_growth_agent.cli import main
+from personal_growth_agent.compiler import compile_raw_to_wiki
+from personal_growth_agent.config import load_config, write_default_config
 from personal_growth_agent.dashboard import build_dashboard_data, build_static_dashboard
 from personal_growth_agent.growth import generate_growth_cycle
 from personal_growth_agent.knowledge import ingest_article_text, ingest_file, ingest_note
 from personal_growth_agent.models import GrowthMemoryContext
+from personal_growth_agent.prompts import PromptTemplate
+from personal_growth_agent.utils import sha256_text
 from personal_growth_agent.pipeline import run_growth_cycle
-from personal_growth_agent.wiki import init_llm_wiki, lint_wiki, load_growth_memory_context
+from personal_growth_agent.wiki import init_llm_wiki, lint_wiki, load_growth_memory_context, read_wiki_write_log
 
 
 class KnowledgeDashboardTests(unittest.TestCase):
@@ -26,10 +30,11 @@ class KnowledgeDashboardTests(unittest.TestCase):
     def test_wiki_initialization_includes_knowledge_directories(self):
         self.assertTrue((self.wiki_root / "AGENTS.md").exists())
         self.assertTrue((self.wiki_root / "SCHEMA.md").exists())
+        self.assertTrue((self.wiki_root / "data" / "growth-memory").exists())
         self.assertFalse((self.wiki_root / "raw").exists())
         self.assertFalse((self.wiki_root / "wiki").exists())
 
-    def test_note_file_and_article_ingestion_create_raw_manifest_and_wiki_pages(self):
+    def test_note_file_and_article_ingestion_directly_write_wiki_and_log_provenance(self):
         source_file = self.tmp / "agent-notes.md"
         source_file.write_text("# Agent Notes\n\nUse evaluator loops.\n", encoding="utf-8")
         note = ingest_note(self.wiki_root, "Agent loop", "Track agent state and evaluator output.", tags=["agent"])
@@ -43,13 +48,16 @@ class KnowledgeDashboardTests(unittest.TestCase):
             tags=["wiki"],
         )
         manifest = json.loads((self.wiki_root / "data" / "source-manifest.json").read_text(encoding="utf-8"))
+        write_log = read_wiki_write_log(self.wiki_root)
 
         self.assertTrue(Path(note.raw_source.path).exists())
         self.assertTrue(Path(file_result.raw_source.path).exists())
         self.assertEqual(source_file.read_text(encoding="utf-8"), "# Agent Notes\n\nUse evaluator loops.\n")
-        self.assertTrue(Path(article.proposal.diff_path).exists())
-        self.assertIn("wiki\\knowledge\\concepts", article.proposal.diff_path)
-        self.assertEqual(article.proposal.status, "accepted")
+        self.assertTrue(Path(article.write_result.path).exists())
+        self.assertIn("wiki\\knowledge\\concepts", article.write_result.path)
+        self.assertEqual(article.write_result.operation, "create")
+        self.assertTrue(any(entry["targetPath"] == article.write_result.target_path for entry in write_log))
+        self.assertTrue(any(article.raw_source.id in entry["sourceRawIds"] for entry in write_log))
         self.assertFalse((self.wiki_root / "diff" / "proposed-updates").exists())
         self.assertTrue(any(item["sourceType"] == "user_note" for item in manifest))
         self.assertTrue(any(item["sourceType"] == "local_document" for item in manifest))
@@ -161,6 +169,79 @@ class KnowledgeDashboardTests(unittest.TestCase):
         self.assertEqual(scan_code, 0)
         self.assertTrue((self.workspace / "dashboard" / "index.html").exists())
         self.assertTrue(any(item["sourceType"] == "user_note" for item in manifest))
+
+    def test_cli_wiki_compile_reads_raw_and_prompt_then_writes_wiki(self):
+        raw_dir = self.wiki_root / "raw" / "knowledge" / "notes"
+        raw_dir.mkdir(parents=True)
+        raw_path = raw_dir / "raw_note.md"
+        raw_path.write_text("# Raw Compile Note\n\nCompile this note.", encoding="utf-8")
+        prompt_path = self.workspace / "prompts" / "compile.md"
+        prompt_path.parent.mkdir(parents=True)
+        prompt_path.write_text("---\nid: test_compile\nversion: 1\n---\nCompile raw notes into Wiki pages.", encoding="utf-8")
+
+        code = main(["--workspace", str(self.workspace), "wiki", "compile", "--raw", str(raw_path), "--prompt", str(prompt_path)])
+        write_log = read_wiki_write_log(self.wiki_root)
+
+        self.assertEqual(code, 0)
+        self.assertTrue((self.wiki_root / "wiki" / "knowledge" / "concepts" / "raw-compile-note.md").exists())
+        self.assertTrue(any(entry["promptDigest"] for entry in write_log))
+        self.assertTrue(any(entry["promptPath"] == str(prompt_path) for entry in write_log))
+
+    def test_remote_wiki_compile_requires_approval_and_validated_response(self):
+        raw_path = self.wiki_root / "raw" / "knowledge" / "notes" / "remote.md"
+        raw_path.parent.mkdir(parents=True)
+        raw_path.write_text("# Remote Compile\n\nUse remote compiler.", encoding="utf-8")
+        prompt = PromptTemplate(id="knowledge_ingest", version="v1", scenario="knowledge_ingest", path="prompt.md", content="compile", digest=sha256_text("compile"))
+        config_path = self.workspace / "config.toml"
+        write_default_config(config_path, self.workspace)
+        config = load_config(config_path)
+        config.llm.providers["deepseek"].api_key = "file-secret"
+        calls = {"value": 0}
+
+        skipped = compile_raw_to_wiki(
+            self.wiki_root,
+            raw_path,
+            prompt,
+            llm_config=config.llm,
+            provider="deepseek",
+            approved=False,
+            transport=lambda *_args: calls.__setitem__("value", calls["value"] + 1),
+        )
+
+        written = compile_raw_to_wiki(
+            self.wiki_root,
+            raw_path,
+            prompt,
+            llm_config=config.llm,
+            provider="deepseek",
+            approved=True,
+            transport=lambda *_args: {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "wikiUpdates": [
+                                        {
+                                            "title": "Remote Compile",
+                                            "body": "# Remote Compile\n\n## 摘要\nRemote compiled summary.",
+                                            "sourceEvidenceIds": ["raw"],
+                                        }
+                                    ]
+                                },
+                                ensure_ascii=False,
+                            )
+                        }
+                    }
+                ]
+            },
+        )
+
+        self.assertEqual(skipped, [])
+        self.assertEqual(calls["value"], 0)
+        self.assertTrue(written)
+        self.assertEqual(written[0].compiler, "llm")
+        self.assertEqual(written[0].provider, "deepseek")
 
     def test_growth_context_uses_knowledge_gaps_without_maturity_amplification(self):
         result = ingest_article_text(

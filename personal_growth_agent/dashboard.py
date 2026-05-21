@@ -9,7 +9,7 @@ from typing import Any
 from .audit import classify_sensitivity
 from .models import DashboardBuildResult
 from .utils import sha256_text, utc_now_iso, write_json
-from .wiki import init_llm_wiki, lint_wiki
+from .wiki import init_llm_wiki, lint_wiki, read_growth_memory_state, read_wiki_write_log
 
 
 def build_static_dashboard(workspace: Path, wiki_root: Path) -> DashboardBuildResult:
@@ -53,6 +53,7 @@ def build_dashboard_data(workspace: Path, wiki_root: Path) -> tuple[dict[str, An
         "wikiRoot": str(wiki_root),
         "reports": _report_index(workspace),
         "wikiPages": _wiki_page_index(wiki_root),
+        "wikiWrites": _wiki_write_index(wiki_root),
         "sources": safe_sources,
         "growth": _growth_index(wiki_root),
         "knowledgeGaps": _knowledge_gap_index(wiki_root),
@@ -76,6 +77,23 @@ def _read_manifest(wiki_root: Path) -> list[dict[str, Any]]:
     if not manifest_path.exists():
         return []
     return json.loads(manifest_path.read_text(encoding="utf-8"))
+
+
+def _wiki_write_index(wiki_root: Path) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": entry.get("id"),
+            "targetPath": entry.get("targetPath"),
+            "operation": entry.get("operation"),
+            "sourceRawIds": entry.get("sourceRawIds") or [],
+            "sourceEvidenceIds": entry.get("sourceEvidenceIds") or [],
+            "promptId": entry.get("promptId") or "",
+            "promptDigest": entry.get("promptDigest") or "",
+            "writtenAt": entry.get("writtenAt") or "",
+            "contentHash": entry.get("contentHash") or "",
+        }
+        for entry in read_wiki_write_log(wiki_root)
+    ]
 
 
 def _safe_source_entry(entry: dict[str, Any]) -> dict[str, Any]:
@@ -146,16 +164,29 @@ def _wiki_page_index(wiki_root: Path) -> list[dict[str, Any]]:
 
 def _growth_index(wiki_root: Path) -> dict[str, list[dict[str, Any]]]:
     workspace = wiki_root.parent
+    growth_state = read_growth_memory_state(wiki_root)
     return {
         "overview": _growth_overview(wiki_root),
         "tasks": _latest_run_tasks(workspace) or _typed_pages(wiki_root, "growth_task"),
-        "diagnoses": _typed_pages(wiki_root, "diagnosis"),
-        "maturity": _typed_pages(wiki_root, "maturity_snapshot"),
+        "diagnoses": _growth_state_records(growth_state["diagnoses"]),
+        "maturity": _growth_state_records(growth_state["maturitySnapshots"]),
     }
 
 
+def _growth_state_records(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "path": str(item.get("path") or ""),
+            "title": str(item.get("title") or item.get("track") or item.get("id") or ""),
+            "tracks": item.get("tracks") or [],
+            "status": str(item.get("lifecycle_status") or item.get("evidence_status") or ""),
+        }
+        for item in items
+    ]
+
+
 def _growth_overview(wiki_root: Path) -> list[dict[str, Any]]:
-    diagnoses = _typed_pages(wiki_root, "diagnosis")
+    diagnoses = _growth_state_records(read_growth_memory_state(wiki_root)["diagnoses"])
     gaps = _knowledge_gap_index(wiki_root)
     items = []
     if diagnoses:

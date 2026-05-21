@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from typing import Any
+
 from .models import ActionAsset, EvidenceItem, EvidenceSignal, GrowthCycle, GrowthRunSnapshot, WikiLintIssue, WikiUpdateProposal
 from .utils import write_json
 
 
-def write_reports(run_dir: Path, cycle: GrowthCycle, evidence: list[EvidenceItem], signals: list[EvidenceSignal], assets: list[ActionAsset], proposals: list[WikiUpdateProposal], lint_issues: list[WikiLintIssue], growth_snapshot: GrowthRunSnapshot | None = None, growth_memory_proposals: list[WikiUpdateProposal] | None = None, analyzer: dict[str, object] | None = None) -> None:
+def write_reports(run_dir: Path, cycle: GrowthCycle, evidence: list[EvidenceItem], signals: list[EvidenceSignal], assets: list[ActionAsset], proposals: list[WikiUpdateProposal], lint_issues: list[WikiLintIssue], growth_snapshot: GrowthRunSnapshot | None = None, growth_memory_proposals: list[Any] | None = None, analyzer: dict[str, object] | None = None) -> None:
     markdown = _render_markdown(cycle, assets, proposals, lint_issues, growth_snapshot, growth_memory_proposals or [], analyzer or {})
     (run_dir / "report.md").write_text(markdown, encoding="utf-8")
     write_json(
@@ -25,7 +27,7 @@ def write_reports(run_dir: Path, cycle: GrowthCycle, evidence: list[EvidenceItem
     )
 
 
-def _render_markdown(cycle: GrowthCycle, assets: list[ActionAsset], proposals: list[WikiUpdateProposal], lint_issues: list[WikiLintIssue], growth_snapshot: GrowthRunSnapshot | None, growth_memory_proposals: list[WikiUpdateProposal], analyzer: dict[str, object]) -> str:
+def _render_markdown(cycle: GrowthCycle, assets: list[ActionAsset], proposals: list[WikiUpdateProposal], lint_issues: list[WikiLintIssue], growth_snapshot: GrowthRunSnapshot | None, growth_memory_proposals: list[Any], analyzer: dict[str, object]) -> str:
     lines = ["# 本轮成长任务包", "", "## 本周只做这 3 件事", ""]
     for index, task in enumerate(cycle.tasks, start=1):
         task_kind = "延续任务" if task.task_type == "carried_forward" else "新任务"
@@ -73,7 +75,7 @@ def _render_markdown(cycle: GrowthCycle, assets: list[ActionAsset], proposals: l
     lines.extend(["", "## 成长记忆更新", ""])
     if growth_snapshot:
         lines.append(f"- Raw growth run snapshot: {growth_snapshot.path}")
-    lines.extend(f"- {proposal.target_path}: {proposal.status}" for proposal in growth_memory_proposals)
+    lines.extend(f"- {_update_target_path(item)}: {_update_status(item)}" for item in growth_memory_proposals)
     if cycle.tasks:
         lines.extend(["", "## 术语解释", ""])
         glossary = {}
@@ -86,3 +88,14 @@ def _render_markdown(cycle: GrowthCycle, assets: list[ActionAsset], proposals: l
     if not lint_issues:
         lines.append("- No lint issues.")
     return "\n".join(lines) + "\n"
+
+
+def _update_target_path(item: Any) -> str:
+    return str(getattr(item, "target_path", "") or "")
+
+
+def _update_status(item: Any) -> str:
+    status = getattr(item, "status", "")
+    if status:
+        return str(status)
+    return str(getattr(item, "operation", "written") or "written")

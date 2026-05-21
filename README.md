@@ -242,7 +242,7 @@ C:\Users\<你>\pga-workspace
 - `dashboard/`：执行 `pga dashboard build` 后生成，保存无需启动服务的静态页面。
 - `llm-wiki/raw/knowledge/`：执行 `pga ingest ...` 后生成，保存外部知识原始素材。
 - `llm-wiki/wiki/`：执行 `pga run` 或 `pga ingest ...` 后生成，保存结构化 Markdown 知识页。
-- `llm-wiki/data/`：保存成长任务、source manifest、知识摄取索引等数据。
+- `llm-wiki/data/`：保存成长任务、成长记忆机器状态、source manifest、Wiki 写入日志、知识摄取索引等数据。
 - `llm-wiki/report/`：保存 Wiki lint 等报告。
 
 成长任务当前未完成项保存在：
@@ -259,13 +259,18 @@ C:\Users\<你>\pga-workspace\llm-wiki\data\growth-tasks\archive.json
 
 ## LLM Wiki
 
-`llm-wiki/` 是长期知识库，遵循三层结构：
+`llm-wiki/` 是长期知识库，遵循直接合并版 LLM Wiki 结构：
 
-- `raw/knowledge/`：外部知识原始素材，只读、可溯源。
-- `wiki/`：结构化 Markdown 知识页。
+- `raw/`：原始素材层，只读、可溯源。外部知识在 `raw/knowledge/`，成长运行快照在 `raw/growth-runs/`。
+- `wiki/`：结构化 Markdown 知识层，只放面向人阅读的编译结果。
+- `data/`：机器状态层，保存 source manifest、`wiki-write-log.json`、成长任务和 `growth-memory/`。
+- `prompts/`：摄取、分析、Wiki 编译等提示词。
+- `report/`：Wiki lint 和运行报告。
 - `AGENTS.md` / `SCHEMA.md`：约束 LLM 如何维护 Wiki。
 
-AI 对话扫描结果不写入 `llm-wiki/raw/`。成长任务、诊断和成熟度快照通过 `source_run_id` 与 `source_evidence_ids` 追溯到当天的 `runs/YYYY-MM-DD/`。
+AI 对话扫描结果不写入 `llm-wiki/raw/`。成长运行会把脱敏快照写入 `raw/growth-runs/`，把周期、诊断、成熟度快照等机器状态写入 `data/growth-memory/`。`wiki/growth/` 中只保留面向人阅读的成长概览、当前关注、任务和复盘页面。
+
+本项目不走人工审核队列。LLM Wiki 更新采用 direct merge：系统从 raw/source 和 prompt 编译内容后直接写入 `wiki/`，并在 `data/wiki-write-log.json` 记录目标路径、来源、prompt digest、写入时间和内容 hash，便于追溯和回滚。
 
 可以直接用 Obsidian 打开 `llm-wiki/` 目录，把它作为本地 Markdown Vault 使用：
 
@@ -276,8 +281,10 @@ pga wiki path
 适合在 Obsidian 中查看的内容：
 
 - `wiki/knowledge/`：外部知识和知识缺口。
-- `wiki/growth/`：成长任务、诊断、复盘和成熟度快照。
+- `wiki/growth/`：成长概览、当前关注、成长任务和复盘。
 - `wiki/profile/`：个人画像和角色相关沉淀。
+- `data/growth-memory/`：诊断、成熟度快照、周期等机器可读状态。
+- `data/wiki-write-log.json`：Wiki 直接写入记录。
 - `report/lint-reports/`：Wiki lint 报告。
 - `AGENTS.md` / `SCHEMA.md`：Wiki 维护规则和结构约束。
 
@@ -316,6 +323,12 @@ pga ingest web \
 ```
 
 摄取结果会写入 `llm-wiki/raw/knowledge/`，并自动沉淀为 `llm-wiki/wiki/knowledge/` 下的正式 Wiki 页面。
+
+也可以指定 raw 路径和 prompt 路径执行一次 Wiki 编译：
+
+```bash
+pga wiki compile --raw ./llm-wiki/raw/knowledge/files --prompt ./prompts/knowledge_ingest.zh.md
+```
 
 ## 静态 Dashboard
 

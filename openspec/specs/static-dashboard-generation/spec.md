@@ -1,6 +1,6 @@
 ## Purpose
 
-Define how the system generates a no-server static dashboard for reviewing LLM Wiki knowledge, growth reports, growth plans, proposals, source lineage, and privacy state.
+Define how the system generates a no-server static dashboard for reviewing LLM Wiki knowledge, growth reports, growth plans, direct writes, source lineage, and privacy state.
 
 ## Requirements
 
@@ -16,15 +16,15 @@ The system SHALL generate a static dashboard that can be opened directly from di
 - **THEN** the dashboard renders without requiring a running backend service
 
 ### Requirement: Provide Wiki and growth review views
-The static dashboard SHALL include views for Wiki knowledge, growth reports, growth tasks, maturity estimates, Wiki update proposals, source lineage, and privacy status.
+The static dashboard SHALL include views for Wiki knowledge, growth reports, growth tasks, maturity estimates, direct Wiki writes, source lineage, and privacy status.
 
 #### Scenario: Dashboard renders growth data
-- **WHEN** growth reports and Wiki growth memory exist
-- **THEN** the dashboard shows report summaries, active tasks, maturity snapshots, diagnoses, and review states
+- **WHEN** growth reports and growth memory state exist
+- **THEN** the dashboard shows report summaries, active tasks, maturity snapshots, diagnoses, and review states from machine-readable growth memory and compiled Wiki summaries
 
 #### Scenario: Dashboard renders Wiki data
-- **WHEN** Wiki pages and update proposals exist
-- **THEN** the dashboard shows page lists, proposal status, source counts, related pages, and review needs
+- **WHEN** Wiki pages and direct write logs exist
+- **THEN** the dashboard shows page lists, write provenance, source counts, related pages, and lint status
 
 ### Requirement: Export dashboard-safe data
 The system MUST build dashboard data from sanitized, dashboard-safe summaries rather than raw source content by default.
@@ -32,13 +32,6 @@ The system MUST build dashboard data from sanitized, dashboard-safe summaries ra
 #### Scenario: Raw knowledge exists
 - **WHEN** dashboard data is generated
 - **THEN** the output excludes raw conversation messages, raw code, secrets, and local-only source bodies unless explicitly allowed by safe export rules
-
-### Requirement: Support static proposal review
-The dashboard SHALL make Wiki update proposals inspectable without applying them.
-
-#### Scenario: Proposal exists
-- **WHEN** a WikiUpdateProposal is included in dashboard data
-- **THEN** the dashboard displays target path, reason, risk, source references, status, and diff file path
 
 ### Requirement: Support dashboard open command
 The CLI SHALL provide a command that resolves the current workspace dashboard entry file and opens or prints it.

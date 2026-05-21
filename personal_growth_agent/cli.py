@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from .config import DEFAULT_WORKSPACE, AppConfig, ensure_workspace, load_config, resolve_paths, write_default_config
+from .compiler import compile_raw_to_wiki
 from .dashboard import build_static_dashboard, open_static_dashboard
 from .knowledge import ingest_article_text, ingest_file, ingest_note, ingest_url
 from .pipeline import run_growth_cycle
@@ -45,6 +46,9 @@ def main(argv: list[str] | None = None, interactive_runner=None) -> int:
     wiki_parser = subparsers.add_parser("wiki")
     wiki_subparsers = wiki_parser.add_subparsers(dest="wiki_command")
     wiki_subparsers.add_parser("path")
+    wiki_compile_parser = wiki_subparsers.add_parser("compile")
+    wiki_compile_parser.add_argument("--raw", required=True, type=Path)
+    wiki_compile_parser.add_argument("--prompt", required=True, type=Path)
 
     prompts_parser = subparsers.add_parser("prompts")
     prompts_subparsers = prompts_parser.add_subparsers(dest="prompts_command")
@@ -125,6 +129,22 @@ def main(argv: list[str] | None = None, interactive_runner=None) -> int:
     if args.command == "wiki" and args.wiki_command == "path":
         print(paths.wiki)
         return 0
+    if args.command == "wiki" and args.wiki_command == "compile":
+        from .prompts import PromptTemplate
+        from .utils import sha256_text
+
+        prompt_content = args.prompt.read_text(encoding="utf-8")
+        prompt = PromptTemplate(
+            id=_prompt_metadata(prompt_content).get("id") or args.prompt.stem,
+            version=_prompt_metadata(prompt_content).get("version") or "v1",
+            scenario="wiki_compile",
+            path=str(args.prompt),
+            content=prompt_content,
+            digest=sha256_text(prompt_content),
+        )
+        results = compile_raw_to_wiki(paths.wiki, args.raw, prompt)
+        print(json.dumps([result.target_path for result in results], ensure_ascii=False))
+        return 0
     if args.command == "prompts" and args.prompts_command == "path":
         print(config.llm.prompt_dir)
         return 0
@@ -204,11 +224,11 @@ def _handle_ingest(args: argparse.Namespace, wiki_root: Path) -> int:
         if content is None:
             content = sys.stdin.read()
         result = ingest_note(wiki_root, args.title, content, tags=args.tag)
-        print(result.raw_source.id)
+        print(_ingest_summary(result))
         return 0
     if args.ingest_command == "file":
         result = ingest_file(wiki_root, args.path, tags=args.tag)
-        print(result.raw_source.id)
+        print(_ingest_summary(result))
         return 0
     if args.ingest_command == "web":
         if args.fetch:
@@ -218,7 +238,7 @@ def _handle_ingest(args: argparse.Namespace, wiki_root: Path) -> int:
             if content is None:
                 content = sys.stdin.read()
             result = ingest_article_text(wiki_root, args.title, content, origin_url=args.url, publisher=args.publisher, author=args.author, tags=args.tag)
-        print(result.raw_source.id)
+        print(_ingest_summary(result))
         return 0
     return 1
 
@@ -258,6 +278,30 @@ def _complete_task(wiki_root: Path, task_id: str) -> str:
     archive_path.parent.mkdir(parents=True, exist_ok=True)
     archive_path.write_text(json.dumps(list(archive_by_id.values()), ensure_ascii=False, indent=2), encoding="utf-8")
     return task_id
+
+
+def _ingest_summary(result: object) -> str:
+    raw_source = getattr(result, "raw_source")
+    write_result = getattr(result, "write_result", None)
+    if write_result:
+        return json.dumps({"rawSourceId": raw_source.id, "wikiTargetPath": write_result.target_path}, ensure_ascii=False)
+    return raw_source.id
+
+
+def _prompt_metadata(text: str) -> dict[str, str]:
+    if not text.startswith("---"):
+        return {}
+    parts = text.split("---", 2)
+    if len(parts) < 3:
+        return {}
+    metadata = {}
+    for raw_line in parts[1].splitlines():
+        line = raw_line.strip()
+        if not line or ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        metadata[key.strip()] = value.strip()
+    return metadata
 
 
 if __name__ == "__main__":

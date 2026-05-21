@@ -12,7 +12,7 @@ from .evidence import aggregate_signals, extract_evidence
 from .growth import generate_growth_cycle
 from .reporting import write_reports
 from .utils import to_jsonable, utc_now_iso, write_json
-from .wiki import create_growth_memory_proposals, create_growth_run_snapshot, init_llm_wiki, lint_wiki, load_growth_memory_context
+from .wiki import create_growth_memory_proposals, create_growth_run_snapshot, init_llm_wiki, lint_wiki, load_growth_memory_context, read_wiki_write_log
 from .prompts import PromptRegistry, prompt_to_payload
 
 
@@ -157,6 +157,7 @@ def run_growth_cycle(source_paths: dict[str, list[Path]], output_root: Path, con
     outbound_payloads = [preview]
     if analyzer_payload_preview:
         outbound_payloads.append(analyzer_payload_preview)
+    wiki_writes = read_wiki_write_log(wiki_root)
     write_json(
         run_dir / "privacy-audit.json",
         {
@@ -166,6 +167,7 @@ def run_growth_cycle(source_paths: dict[str, list[Path]], output_root: Path, con
             "analyzer": analyzer_validation,
             "actionAssets": [asset.id for asset in assets],
             "wikiUpdates": [],
+            "wikiWrites": wiki_writes,
             "growthRunSnapshots": [growth_snapshot.id],
             "growthMemoryUpdates": [proposal.id for proposal in growth_memory_proposals],
             "lintPrivacyFindings": [],

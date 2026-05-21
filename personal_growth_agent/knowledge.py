@@ -5,9 +5,9 @@ from pathlib import Path
 from typing import Any
 
 from .audit import classify_sensitivity, redact_text
-from .models import KnowledgeGap, KnowledgeIngestResult, KnowledgeSourceInput, RawSource, WikiUpdateProposal
+from .models import KnowledgeGap, KnowledgeIngestResult, KnowledgeSourceInput, RawSource, WikiWriteResult
 from .utils import sha256_text, stable_id, utc_now_iso, write_json
-from .wiki import create_wiki_update_proposal, init_llm_wiki
+from .wiki import write_wiki_page_direct, init_llm_wiki
 
 
 def ingest_note(root: Path, title: str, content: str, tags: list[str] | None = None) -> KnowledgeIngestResult:
@@ -104,9 +104,9 @@ def ingest_knowledge(root: Path, source_input: KnowledgeSourceInput) -> Knowledg
         mutable=False,
     )
     gaps = _extract_knowledge_gaps(source_input, raw_id)
-    proposal = _create_knowledge_proposal(root, source_input, raw_source, safe_content, gaps)
+    write_result = _compile_knowledge_to_wiki(root, source_input, raw_source, safe_content, gaps)
     _write_knowledge_gap_pages(root, source_input, gaps)
-    return KnowledgeIngestResult(raw_source=raw_source, proposal=proposal, gaps=gaps, manifest_entry=manifest_entry)
+    return KnowledgeIngestResult(raw_source=raw_source, proposal=_write_result_to_proposal(source_input.title, write_result), gaps=gaps, manifest_entry=manifest_entry, write_result=write_result)
 
 
 def _knowledge_folder(source_type: str) -> str:
@@ -173,7 +173,7 @@ def _append_manifest(root: Path, entry: dict[str, Any]) -> None:
     write_json(manifest_path, existing)
 
 
-def _create_knowledge_proposal(root: Path, source_input: KnowledgeSourceInput, raw_source: RawSource, safe_content: str, gaps: list[KnowledgeGap]) -> WikiUpdateProposal:
+def _compile_knowledge_to_wiki(root: Path, source_input: KnowledgeSourceInput, raw_source: RawSource, safe_content: str, gaps: list[KnowledgeGap]) -> WikiWriteResult:
     target_path = f"llm-wiki/wiki/knowledge/concepts/{_slug(source_input.title)}.md"
     safe_origin_url = "[URL_REDACTED]" if source_input.origin_url else ""
     body_lines = [
@@ -204,7 +204,24 @@ def _create_knowledge_proposal(root: Path, source_input: KnowledgeSourceInput, r
     ]
     if gaps:
         body_lines.extend(["", "## 待补充/疑问", *[f"- {gap.summary}" for gap in gaps]])
-    return create_wiki_update_proposal(root, source_input.title, target_path, [], [raw_source.id], "\n".join(body_lines))
+    return write_wiki_page_direct(root, source_input.title, target_path, [], [raw_source.id], "\n".join(body_lines))
+
+
+def _write_result_to_proposal(title: str, write_result: WikiWriteResult):
+    from .models import WikiUpdateProposal
+
+    return WikiUpdateProposal(
+        id=write_result.id,
+        type=write_result.operation,
+        target_path=write_result.target_path,
+        reason=f"{title} was directly written into the LLM Wiki.",
+        source_evidence_ids=write_result.source_evidence_ids,
+        source_raw_ids=write_result.source_raw_ids,
+        diff_path=write_result.path,
+        risk="low",
+        requires_human_review=False,
+        status="accepted",
+    )
 
 
 def _extract_knowledge_gaps(source_input: KnowledgeSourceInput, raw_id: str) -> list[KnowledgeGap]:
@@ -251,8 +268,8 @@ def _write_knowledge_gap_pages(root: Path, source_input: KnowledgeSourceInput, g
             gap.summary,
             "",
         ]
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("\n".join(lines), encoding="utf-8")
+        target_path = f"llm-wiki/wiki/knowledge/gaps/{_slug(gap.title)}.md"
+        write_wiki_page_direct(root, gap.title, target_path, [], gap.source_raw_ids, "\n".join(lines))
 
 
 def _summary_from(content: str) -> str:

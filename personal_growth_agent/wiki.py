@@ -5,12 +5,13 @@ from pathlib import Path
 from typing import Any
 
 from .audit import assert_no_sensitive_content
-from .models import GrowthMemoryContext, GrowthMemoryMetadata, GrowthRunSnapshot, RawSource, WikiLintIssue, WikiPage, WikiUpdateProposal
+from .models import GrowthMemoryContext, GrowthMemoryMetadata, GrowthRunSnapshot, RawSource, WikiLintIssue, WikiPage, WikiUpdateProposal, WikiWriteResult
 from .utils import sha256_text, stable_id, to_jsonable, utc_now_iso, write_json
 
 
 def init_llm_wiki(root: Path) -> None:
     root.mkdir(parents=True, exist_ok=True)
+    (root / "data" / "growth-memory").mkdir(parents=True, exist_ok=True)
     _write_agents_rules(root / "AGENTS.md")
     _write_if_missing(root / "SCHEMA.md", "# LLM Wiki Schema\n\n所有 WikiPage 必须包含 frontmatter 和来源引用。\n")
 
@@ -70,15 +71,16 @@ def create_growth_run_snapshot(root: Path, run_id: str, snapshot: dict[str, Any]
     )
 
 
-def create_growth_memory_proposals(root: Path, cycle, snapshot: GrowthRunSnapshot, source_evidence_ids: list[str]) -> list[WikiUpdateProposal]:
+def create_growth_memory_proposals(root: Path, cycle, snapshot: GrowthRunSnapshot, source_evidence_ids: list[str]) -> list[WikiWriteResult]:
     init_llm_wiki(root)
     _migrate_legacy_growth_task_files(root)
-    proposals: list[WikiUpdateProposal] = []
-    proposals.append(
+    _write_growth_memory_state(root, cycle, snapshot, source_evidence_ids)
+    writes: list[WikiWriteResult] = []
+    writes.append(
         _create_growth_memory_proposal(
             root,
-            "Growth cycle summary",
-            "llm-wiki/wiki/growth/cycles/latest.md",
+            "成长概览",
+            "llm-wiki/wiki/growth/overview.md",
             GrowthMemoryMetadata(
                 type="growth_cycle",
                 lifecycle_status="active",
@@ -93,36 +95,22 @@ def create_growth_memory_proposals(root: Path, cycle, snapshot: GrowthRunSnapsho
                 tracks=[estimate.track for estimate in cycle.maturity_estimates],
                 related=[],
             ),
-            ["## Summary", cycle.theme],
+            [
+                "## Summary",
+                cycle.theme,
+                "",
+                "## Active Diagnoses",
+                *[f"- {diagnosis.title}: {diagnosis.summary}" for diagnosis in cycle.diagnoses],
+                "",
+                "## Maturity",
+                *[f"- {estimate.track}: {estimate.estimated_level} ({estimate.status})" for estimate in cycle.maturity_estimates],
+            ],
         )
     )
-    for diagnosis in cycle.diagnoses:
-        proposals.append(
-            _create_growth_memory_proposal(
-                root,
-                diagnosis.title,
-                f"llm-wiki/wiki/growth/diagnoses/{diagnosis.id}.md",
-                GrowthMemoryMetadata(
-                    type="diagnosis",
-                    lifecycle_status="active",
-                    source_run_id=snapshot.run_id,
-                    source_evidence_ids=diagnosis.supporting_evidence_ids or source_evidence_ids,
-                    source_raw_ids=[],
-                    evidence_status="Inferred",
-                    confidence=diagnosis.confidence,
-                    human_confirmed=False,
-                    valid_until=_default_valid_until(),
-                    review_state="pending",
-                    tracks=diagnosis.target_tracks,
-                    related=[],
-                ),
-                ["## Diagnosis", diagnosis.summary, "", "## Recommended Focus", diagnosis.recommended_focus],
-            )
-        )
     for task in cycle.tasks:
         lifecycle_status = "carried_forward" if task.task_type == "carried_forward" else "active"
         task_path = _growth_task_target_path(task)
-        proposals.append(
+        writes.append(
             _create_growth_memory_proposal(
                 root,
                 task.title,
@@ -144,34 +132,11 @@ def create_growth_memory_proposals(root: Path, cycle, snapshot: GrowthRunSnapsho
                 ["## Task", task.title, "", "## Steps", *[f"- {step}" for step in task.steps], "", "## Done Definition", *[f"- {item}" for item in task.done_definition]],
             )
         )
-    for estimate in cycle.maturity_estimates:
-        proposals.append(
-            _create_growth_memory_proposal(
-                root,
-                f"{estimate.track} maturity snapshot",
-                f"llm-wiki/wiki/growth/maturity-snapshots/{snapshot.run_id}-{estimate.track}.md",
-                GrowthMemoryMetadata(
-                    type="maturity_snapshot",
-                    lifecycle_status="active",
-                    source_run_id=snapshot.run_id,
-                    source_evidence_ids=source_evidence_ids,
-                    source_raw_ids=[],
-                    evidence_status=estimate.status,
-                    confidence=estimate.confidence,
-                    human_confirmed=False,
-                    valid_until=_default_valid_until(),
-                    review_state="pending",
-                    tracks=[estimate.track],
-                    related=[],
-                ),
-                ["## Maturity", f"Level: {estimate.estimated_level}", f"Status: {estimate.status}"],
-            )
-        )
-    proposals.append(
+    writes.append(
         _create_growth_memory_proposal(
             root,
-            "Growth report summary",
-            f"llm-wiki/wiki/growth/cycles/{snapshot.run_id}-report-summary.md",
+            "当前成长关注",
+            "llm-wiki/wiki/growth/current-focus.md",
             GrowthMemoryMetadata(
                 type="report_summary",
                 lifecycle_status="active",
@@ -186,10 +151,16 @@ def create_growth_memory_proposals(root: Path, cycle, snapshot: GrowthRunSnapsho
                 tracks=[estimate.track for estimate in cycle.maturity_estimates],
                 related=[snapshot.path],
             ),
-            ["## Report Summary", f"Raw snapshot: {snapshot.path}"],
+            [
+                "## Report Summary",
+                f"Raw snapshot: {snapshot.path}",
+                "",
+                "## Current Focus",
+                *[f"- {diagnosis.recommended_focus}" for diagnosis in cycle.diagnoses],
+            ],
         )
     )
-    return proposals
+    return writes
 
 
 def ingest_raw_source(root: Path, source_type: str, origin: str, content: str, original_location: str) -> RawSource:
@@ -216,25 +187,74 @@ def ingest_raw_source(root: Path, source_type: str, origin: str, content: str, o
     return RawSource(id=raw_id, type=source_type, path=str(path), origin=origin, created_at=entry["ingestedAt"], hash=digest, sensitivity="redacted", mutable=False)
 
 
-def create_wiki_update_proposal(root: Path, title: str, target_path: str, source_evidence_ids: list[str], source_raw_ids: list[str], body: str) -> WikiUpdateProposal:
+def write_wiki_page_direct(root: Path, title: str, target_path: str, source_evidence_ids: list[str], source_raw_ids: list[str], body: str, prompt: dict[str, str] | None = None, compiler: str = "local_rule", provider: str = "", model: str = "") -> WikiWriteResult:
     init_llm_wiki(root)
     assert_no_sensitive_content(body)
-    proposal_id = stable_id("wiki_update", target_path, ",".join(source_evidence_ids), body)
-    update_path = root / target_path.removeprefix("llm-wiki/")
-    update_path.parent.mkdir(parents=True, exist_ok=True)
-    update_path.write_text(body if body.endswith("\n") else f"{body}\n", encoding="utf-8")
+    content = body if body.endswith("\n") else f"{body}\n"
+    content_hash = sha256_text(content)
+    write_id = stable_id("wiki_write", target_path, content_hash)
+    page_path = root / target_path.removeprefix("llm-wiki/")
+    operation = "update" if page_path.exists() else "create"
+    page_path.parent.mkdir(parents=True, exist_ok=True)
+    page_path.write_text(content, encoding="utf-8")
+    prompt_data = prompt or {}
+    written_at = utc_now_iso()
+    result = WikiWriteResult(
+        id=write_id,
+        target_path=target_path,
+        path=str(page_path),
+        operation=operation,
+        source_evidence_ids=source_evidence_ids,
+        source_raw_ids=source_raw_ids,
+        prompt_id=str(prompt_data.get("id") or ""),
+        prompt_version=str(prompt_data.get("version") or ""),
+        prompt_path=str(prompt_data.get("path") or ""),
+        prompt_digest=str(prompt_data.get("digest") or ""),
+        compiler=compiler,
+        provider=provider,
+        model=model,
+        content_hash=content_hash,
+        written_at=written_at,
+    )
+    _append_wiki_write_log(root, result)
+    return result
+
+
+def create_wiki_update_proposal(root: Path, title: str, target_path: str, source_evidence_ids: list[str], source_raw_ids: list[str], body: str) -> WikiUpdateProposal:
+    write_result = write_wiki_page_direct(root, title, target_path, source_evidence_ids, source_raw_ids, body)
     return WikiUpdateProposal(
-        id=proposal_id,
-        type="create",
+        id=write_result.id,
+        type=write_result.operation,
         target_path=target_path,
         reason=f"{title} was accepted into the LLM Wiki.",
         source_evidence_ids=source_evidence_ids,
         source_raw_ids=source_raw_ids,
-        diff_path=str(update_path),
+        diff_path=write_result.path,
         risk="low",
         requires_human_review=False,
         status="accepted",
     )
+
+
+def read_wiki_write_log(root: Path) -> list[dict[str, Any]]:
+    log_path = root / "data" / "wiki-write-log.json"
+    if not log_path.exists():
+        return []
+    value = json.loads(log_path.read_text(encoding="utf-8"))
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
+def read_growth_memory_state(root: Path) -> dict[str, Any]:
+    state_root = root / "data" / "growth-memory"
+    return {
+        "cycles": _read_json_list(state_root / "cycles.json"),
+        "diagnoses": _read_json_list(state_root / "diagnoses.json"),
+        "tasks": _read_json_list(state_root / "tasks.json"),
+        "maturitySnapshots": _read_json_list(state_root / "maturity-snapshots.json"),
+        "reportSummaries": _read_json_list(state_root / "report-summaries.json"),
+    }
 
 
 def create_wiki_page_draft(root: Path, title: str, page_type: str, target_path: str, source_evidence_ids: list[str], tracks: list[str], body: str, source_raw_ids: list[str] | None = None) -> WikiPage:
@@ -314,6 +334,7 @@ def lint_wiki(root: Path) -> list[WikiLintIssue]:
 def load_growth_memory_context(root: Path) -> GrowthMemoryContext:
     init_llm_wiki(root)
     context = GrowthMemoryContext()
+    _load_growth_memory_state_context(root, context)
     for page in (root / "wiki").rglob("*.md"):
         text = page.read_text(encoding="utf-8")
         metadata = _parse_frontmatter(text)
@@ -354,6 +375,47 @@ def load_growth_memory_context(root: Path) -> GrowthMemoryContext:
         elif record["evidence_status"] == "Inferred":
             context.inferred_memory.append(record)
     return context
+
+
+def _load_growth_memory_state_context(root: Path, context: GrowthMemoryContext) -> None:
+    state = read_growth_memory_state(root)
+    for record in state["diagnoses"]:
+        if _skip_growth_state_record(record):
+            continue
+        context.active_diagnoses.append(_growth_state_context_record(record))
+    for record in state["tasks"]:
+        if _skip_growth_state_record(record):
+            continue
+        context.active_tasks.append(_growth_state_context_record(record))
+    for record in state["maturitySnapshots"]:
+        if _skip_growth_state_record(record):
+            continue
+        context.maturity_snapshots.append(_growth_state_context_record(record))
+    for record in state["reportSummaries"]:
+        if _skip_growth_state_record(record):
+            continue
+        context.inferred_memory.append(_growth_state_context_record(record))
+
+
+def _skip_growth_state_record(record: dict[str, Any]) -> bool:
+    lifecycle_status = str(record.get("lifecycle_status") or "")
+    if lifecycle_status in {"stale", "rejected", "superseded"}:
+        return True
+    return _is_expired(str(record.get("valid_until") or ""))
+
+
+def _growth_state_context_record(record: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "path": str(record.get("path") or ""),
+        "title": str(record.get("title") or record.get("track") or record.get("id") or ""),
+        "type": record.get("type"),
+        "lifecycle_status": record.get("lifecycle_status"),
+        "evidence_status": record.get("evidence_status"),
+        "human_confirmed": record.get("human_confirmed") is True or str(record.get("human_confirmed")).lower() == "true",
+        "confidence": record.get("confidence"),
+        "source_run_id": record.get("source_run_id"),
+        "tracks": record.get("tracks") or [],
+    }
 
 
 def _folder_for(source_type: str) -> str:
@@ -405,12 +467,138 @@ def _append_manifest(root: Path, entry: dict[str, Any]) -> None:
     write_json(manifest_path, existing)
 
 
-def _create_growth_memory_proposal(root: Path, title: str, target_path: str, metadata: GrowthMemoryMetadata, body_lines: list[str]) -> WikiUpdateProposal:
+def _append_wiki_write_log(root: Path, result: WikiWriteResult) -> None:
+    entry = {
+        "id": result.id,
+        "targetPath": result.target_path,
+        "path": result.path,
+        "operation": result.operation,
+        "sourceEvidenceIds": result.source_evidence_ids,
+        "sourceRawIds": result.source_raw_ids,
+        "promptId": result.prompt_id,
+        "promptVersion": result.prompt_version,
+        "promptPath": result.prompt_path,
+        "promptDigest": result.prompt_digest,
+        "compiler": result.compiler,
+        "provider": result.provider,
+        "model": result.model,
+        "contentHash": result.content_hash,
+        "writtenAt": result.written_at,
+    }
+    entries = read_wiki_write_log(root)
+    entries.append(entry)
+    write_json(root / "data" / "wiki-write-log.json", entries)
+
+
+def _create_growth_memory_proposal(root: Path, title: str, target_path: str, metadata: GrowthMemoryMetadata, body_lines: list[str]) -> WikiWriteResult:
     validate_growth_memory_metadata(metadata)
     body = "\n".join([*_frontmatter_lines(metadata), "", f"# {title}", "", *body_lines, ""])
     if metadata.type == "growth_task":
         _remove_legacy_growth_task_file(root, target_path, title)
-    return create_wiki_update_proposal(root, title, target_path, metadata.source_evidence_ids, metadata.source_raw_ids, body)
+    return write_wiki_page_direct(root, title, target_path, metadata.source_evidence_ids, metadata.source_raw_ids, body)
+
+
+def _write_growth_memory_state(root: Path, cycle: Any, snapshot: GrowthRunSnapshot, source_evidence_ids: list[str]) -> None:
+    state_root = root / "data" / "growth-memory"
+    state_root.mkdir(parents=True, exist_ok=True)
+    cycle_record = {
+        "id": cycle.id,
+        "theme": cycle.theme,
+        "cadence": cycle.cadence,
+        "source_run_id": snapshot.run_id,
+        "source_evidence_ids": source_evidence_ids,
+        "snapshot_id": snapshot.id,
+        "updated_at": utc_now_iso(),
+    }
+    diagnosis_records = []
+    for diagnosis in cycle.diagnoses:
+        diagnosis_records.append(
+            {
+                "id": diagnosis.id,
+                "type": "diagnosis",
+                "title": diagnosis.title,
+                "lifecycle_status": "active",
+                "source_run_id": snapshot.run_id,
+                "source_evidence_ids": diagnosis.supporting_evidence_ids or source_evidence_ids,
+                "evidence_status": "Inferred",
+                "confidence": diagnosis.confidence,
+                "human_confirmed": False,
+                "valid_until": _default_valid_until(),
+                "review_state": "pending",
+                "tracks": diagnosis.target_tracks,
+                "summary": diagnosis.summary,
+                "recommended_focus": diagnosis.recommended_focus,
+            }
+        )
+    task_records = []
+    for task in cycle.tasks:
+        lifecycle_status = "carried_forward" if task.task_type == "carried_forward" else "active"
+        task_records.append(
+            {
+                "id": task.id,
+                "type": "growth_task",
+                "title": task.title,
+                "lifecycle_status": lifecycle_status,
+                "source_run_id": snapshot.run_id,
+                "source_evidence_ids": source_evidence_ids,
+                "evidence_status": "Inferred",
+                "confidence": 0.65,
+                "human_confirmed": False,
+                "valid_until": _default_valid_until(),
+                "review_state": "pending",
+                "tracks": [task.primary_track, *task.secondary_tracks],
+                "path": str(root / _growth_task_target_path(task).removeprefix("llm-wiki/")),
+            }
+        )
+    maturity_records = []
+    for estimate in cycle.maturity_estimates:
+        maturity_records.append(
+            {
+                "id": stable_id("maturity", snapshot.run_id, estimate.track),
+                "type": "maturity_snapshot",
+                "track": estimate.track,
+                "estimated_level": estimate.estimated_level,
+                "lifecycle_status": "active",
+                "source_run_id": snapshot.run_id,
+                "source_evidence_ids": source_evidence_ids,
+                "evidence_status": estimate.status,
+                "confidence": estimate.confidence,
+                "human_confirmed": False,
+                "valid_until": _default_valid_until(),
+                "review_state": "pending",
+                "tracks": [estimate.track],
+            }
+        )
+    report_records = [
+        {
+            "id": stable_id("report_summary", snapshot.run_id),
+            "type": "report_summary",
+            "lifecycle_status": "active",
+            "source_run_id": snapshot.run_id,
+            "source_evidence_ids": source_evidence_ids,
+            "snapshot_path": snapshot.path,
+            "evidence_status": "Inferred",
+            "confidence": 0.7,
+            "human_confirmed": False,
+            "valid_until": _default_valid_until(),
+            "review_state": "accepted",
+            "tracks": [estimate.track for estimate in cycle.maturity_estimates],
+        }
+    ]
+    write_json(state_root / "cycles.json", [cycle_record])
+    write_json(state_root / "diagnoses.json", diagnosis_records)
+    write_json(state_root / "tasks.json", task_records)
+    write_json(state_root / "maturity-snapshots.json", maturity_records)
+    write_json(state_root / "report-summaries.json", report_records)
+
+
+def _read_json_list(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
 
 
 def _growth_task_target_path(task: Any) -> str:

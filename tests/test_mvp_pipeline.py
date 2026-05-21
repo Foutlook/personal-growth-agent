@@ -19,6 +19,8 @@ from personal_growth_agent.wiki import (
     ingest_raw_source,
     lint_wiki,
     load_growth_memory_context,
+    read_growth_memory_state,
+    read_wiki_write_log,
     validate_growth_memory_metadata,
 )
 
@@ -332,27 +334,32 @@ class PersonalGrowthAgentMvpTests(unittest.TestCase):
         self.assertEqual(before, snapshot_path.read_text(encoding="utf-8"))
         self.assertTrue(any(item["sourceType"] == "growth_run" and item["rawSourceId"] == first.id for item in manifest))
 
-    def test_growth_memory_updates_and_lint_include_metadata(self):
+    def test_growth_memory_writes_machine_state_and_direct_summaries(self):
         wiki_root = self.tmp / "llm-wiki"
         sessions, _ = parse_sources(discover_sources({"codex": [self.sources_root / "codex"], "claude_code": [self.sources_root / "claude"]}))
         evidence = extract_evidence(sessions)
         signals = aggregate_signals(evidence)
         cycle = generate_growth_cycle(signals, {"weeklyTimeBudgetHours": 3, "currentFocus": "balanced"})
         snapshot = create_growth_run_snapshot(wiki_root, cycle.id, {"report": "summary"}, [item.id for item in evidence[:3]], [])
-        proposals = create_growth_memory_proposals(wiki_root, cycle, snapshot, [item.id for item in evidence[:3]])
+        writes = create_growth_memory_proposals(wiki_root, cycle, snapshot, [item.id for item in evidence[:3]])
+        growth_state = read_growth_memory_state(wiki_root)
+        write_log = read_wiki_write_log(wiki_root)
 
-        update_text = Path(proposals[0].diff_path).read_text(encoding="utf-8")
+        update_text = Path(writes[0].path).read_text(encoding="utf-8")
         unsupported_page = wiki_root / "wiki" / "growth" / "diagnoses" / "unsupported.md"
         unsupported_page.parent.mkdir(parents=True, exist_ok=True)
         unsupported_page.write_text("---\ntype: diagnosis\nlifecycle_status: active\n---\n# Unsupported\n", encoding="utf-8")
         issues = lint_wiki(wiki_root)
 
-        self.assertGreaterEqual(len(proposals), 1 + len(cycle.tasks) + len(cycle.diagnoses) + len(cycle.maturity_estimates))
-        self.assertTrue(all(proposal.status == "accepted" for proposal in proposals))
+        self.assertGreaterEqual(len(writes), 2 + len(cycle.tasks))
+        self.assertEqual(len(growth_state["diagnoses"]), len(cycle.diagnoses))
+        self.assertEqual(len(growth_state["maturitySnapshots"]), len(cycle.maturity_estimates))
+        self.assertFalse((wiki_root / "wiki" / "growth" / "maturity-snapshots").exists())
+        self.assertTrue((wiki_root / "wiki" / "growth" / "overview.md").exists())
+        self.assertTrue(any(entry["targetPath"] == writes[0].target_path for entry in write_log))
         self.assertFalse((wiki_root / "diff" / "proposed-updates").exists())
         self.assertIn("source_run_id:", update_text)
         self.assertIn("evidence_status:", update_text)
-        self.assertNotIn("source_raw_ids:", update_text)
         self.assertTrue(any(issue.type == "growth_missing_source" for issue in issues))
 
     def test_growth_memory_context_influences_next_cycle_without_confidence_amplification(self):
@@ -410,9 +417,13 @@ class PersonalGrowthAgentMvpTests(unittest.TestCase):
         audit = json.loads((run_dir / "privacy-audit.json").read_text(encoding="utf-8"))
 
         self.assertTrue((output / "llm-wiki" / "raw" / "growth-runs").exists())
+        self.assertTrue((output / "llm-wiki" / "data" / "growth-memory" / "diagnoses.json").exists())
+        self.assertTrue((output / "llm-wiki" / "wiki" / "growth" / "overview.md").exists())
         self.assertTrue((output / "llm-wiki" / "wiki" / "growth" / "tasks").exists())
         self.assertTrue((run_dir / "wiki-updates" / "growth-memory-updates.json").exists())
+        self.assertFalse((output / "llm-wiki" / "wiki" / "growth" / "maturity-snapshots").exists())
         self.assertIn("growthRunSnapshots", audit)
+        self.assertIn("wikiWrites", audit)
         self.assertIn("## 成长记忆更新", (run_dir / "report.md").read_text(encoding="utf-8"))
 
 

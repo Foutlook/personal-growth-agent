@@ -19,6 +19,7 @@ from personal_growth_agent.config import DEFAULT_WORKSPACE, load_config, resolve
 from personal_growth_agent.data import discover_sources, parse_sources
 from personal_growth_agent.pipeline import run_growth_cycle
 from personal_growth_agent.sources import ClaudeCodeAdapter, CodexAdapter, OpenCodeAdapter, scan_sources
+from personal_growth_agent.utils import utc_now_iso
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -79,7 +80,7 @@ class CliWorkspaceAnalyzerTests(unittest.TestCase):
         first_code = main(["--workspace", str(workspace), "run", "--source", source_arg, "--dry-run"])
         first_report = main(["--workspace", str(workspace), "report", "latest"])
         second_code = main(["--workspace", str(workspace), "run", "--source", source_arg, "--dry-run"])
-        daily_report = workspace / "runs" / "2026-05-18" / "report.md"
+        daily_report = workspace / "runs" / utc_now_iso()[:10] / "report.md"
         daily_reports = list((workspace / "runs").glob("*/report.md"))
 
         self.assertEqual(first_code, 0)

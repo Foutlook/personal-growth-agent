@@ -69,6 +69,7 @@ class KnowledgeIngestResult:
     proposal: "WikiUpdateProposal"
     gaps: list[KnowledgeGap]
     manifest_entry: dict[str, Any]
+    write_result: "WikiWriteResult | None" = None
 
 
 @dataclass
@@ -205,6 +206,25 @@ class WikiUpdateProposal:
     risk: str
     requires_human_review: bool
     status: str
+
+
+@dataclass
+class WikiWriteResult:
+    id: str
+    target_path: str
+    path: str
+    operation: str
+    source_evidence_ids: list[str]
+    source_raw_ids: list[str]
+    prompt_id: str = ""
+    prompt_version: str = ""
+    prompt_path: str = ""
+    prompt_digest: str = ""
+    compiler: str = "local_rule"
+    provider: str = ""
+    model: str = ""
+    content_hash: str = ""
+    written_at: str = ""
 
 
 @dataclass
