@@ -41,15 +41,20 @@ For write workflows, use this loop:
 
 1. Select exactly one reference workflow and read it.
 2. Extract structured data from the conversation or material:
-   - **capture**: Pull `title` (topic), `summary` (3-5 bullet points), `decisions` (what was decided), `insights` (non-obvious takeaways), `next_actions` (concrete next steps). Use the user's own words for key decisions.
-   - **ingest**: Pull `title`, `summary_points` (max 6 durable points), `key_concepts` (terms to remember), `why_it_matters` (how this changes practice), `application_ideas` (what to do with this knowledge).
-   - **review**: Pull `title`, `period` (e.g. "2026-W21"), `observations` (what happened), `progress` (what moved forward), `bottlenecks` (what blocked), `knowledge_gaps` (what's missing), `next_tasks` (concrete small tasks).
+   - **capture**: Pull `title` (topic), `summary` (3-5 bullet points, each ≤ 100 chars), `decisions` (what was decided), `insights` (non-obvious takeaways), `next_actions` (concrete next steps). Use the user's own words for key decisions.
+   - **ingest**: Pull `title`, `summary_points` (max 6 durable points, each ≤ 200 chars), `key_concepts` (terms to remember), `why_it_matters` (how this changes practice), `application_ideas` (what to do with this knowledge).
+   - **review**: Pull `title`, `period` (e.g. "2026-W21"), `observations` (what happened), `progress` (what moved forward), `bottlenecks` (what blocked), `knowledge_gaps` (what's missing), `next_tasks` (concrete small tasks, each ≤ 80 chars).
    - **project**: Let the host CLI inspect the project with its normal tools, then pull `project`, `summary`, `architecture`, `decisions`, `lessons`, `risks`, `next_actions`, and `source_paths`.
    - **Checkpoint**: Before proceeding, verify the extracted data matches the user's intent. If the intent is ambiguous, the content looks sensitive, or more than one workflow could apply, pause and ask one concise clarification question (see Pause Points).
 3. Store the JSON in a temporary file or host-managed scratch file.
 4. Run the matching `gkh.py` command.
    - **Checkpoint**: If the script returns an error, do not proceed to step 5. Report the error plainly, keep or show the temporary JSON, and ask the user whether to revise and retry.
-5. Report the result in human terms: what was written, where it was written, whether anything was redacted, and how to recall it later.
+5. Report the result in human terms using this template:
+   - **Written**: `<page-title>` → `<relative-path>`
+   - **Sections**: list the main sections saved (e.g., 摘要, 关键决策, 下一步)
+   - **Redactions**: if any, list the types (e.g., secret, email, url); if none, say "无脱敏项"
+   - **Recall**: `search --query "<suggested-keyword>"` or `context --query "<suggested-keyword>"`
+   - Example: "已写入 `wiki/growth/reviews/skill-架构设计讨论.md`，包含摘要、决策、洞察和下一步。无脱敏项。可通过 `search --query 'skill 架构'` 召回。"
 
 For recall workflows, start with `search` or `context`. Use `read` only for selected pages from the result list.
 
