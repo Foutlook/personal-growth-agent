@@ -108,6 +108,17 @@ The local Wiki lives at `<data-home>/llm-wiki/`.
 - If the user provides secrets, tokens, private keys, or local-only material, redact or reject before writing.
 - The script does not call remote models, does not execute arbitrary skills, and does not scan repositories. For project analysis, the host CLI inspects files and passes structured lessons to `project`.
 
+## Fallback
+
+When the script or data directory is unavailable, follow these fallback paths:
+
+| Situation | Trigger | Action |
+| --- | --- | --- |
+| Script not found | `python scripts/gkh.py` fails with FileNotFoundError | Tell the user the skill script is missing. Offer to locate it or check the skill installation. |
+| Data directory not writable | PermissionError on write | Tell the user the data home is not writable. Suggest checking permissions or using `--scope project` for a project-local directory. |
+| Index corrupted | `search` or `context` returns unexpected errors | Run `gkh.py index` to rebuild the index, then retry the original command. |
+| Partial write | Script exits mid-operation (e.g., wiki page written but index not updated) | Run `gkh.py index` to reconcile. Report what was written and what needs manual verification. |
+
 ## Pause Points
 
 Stop and ask the user before proceeding when any of these are true:
