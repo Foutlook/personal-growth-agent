@@ -18,6 +18,8 @@ Use this skill for:
 
 Do not use this skill to replace the host CLI's chat, tool calling, file reading, or model routing. The host CLI remains the agent; this skill is the memory layer.
 
+When the user's intent is still fuzzy, pause before writing anything and decide which workflow fits best. A short clarification is better than saving the wrong thing into long-lived memory.
+
 ## Workflow Selection
 
 Read only the reference needed for the user's current intent:
@@ -31,6 +33,60 @@ Read only the reference needed for the user's current intent:
 | Need exact local Wiki layout or metadata rules | `references/llm-wiki-schema.md` |
 | Local project analysis request | `references/project-analysis.md` |
 
+If the user says something broad like "帮我记一下" or "整理一下", first decide whether it is conversation capture, external material ingestion, growth review, recall, or project analysis. If more than one path looks plausible, ask one concise question before writing.
+
+## Execution Loop
+
+For write workflows, use this loop:
+
+1. Select exactly one reference workflow and read it.
+2. Extract structured data from the conversation or material:
+   - **capture**: Pull `title` (topic), `summary` (3-5 bullet points, each ≤ 100 chars), `decisions` (what was decided), `insights` (non-obvious takeaways), `next_actions` (concrete next steps). Use the user's own words for key decisions.
+   - **ingest**: Pull `title`, `summary_points` (max 6 durable points, each ≤ 200 chars), `key_concepts` (terms to remember), `why_it_matters` (how this changes practice), `application_ideas` (what to do with this knowledge).
+   - **review**: Pull `title`, `period` (e.g. "2026-W21"), `observations` (what happened), `progress` (what moved forward), `bottlenecks` (what blocked), `knowledge_gaps` (what's missing), `next_tasks` (concrete small tasks, each ≤ 80 chars).
+   - **project**: Let the host CLI inspect the project with its normal tools, then pull `project`, `summary`, `architecture`, `decisions`, `lessons`, `risks`, `next_actions`, and `source_paths`.
+   - **Checkpoint**: Before proceeding, verify the extracted data matches the user's intent. If the intent is ambiguous, the content looks sensitive, or more than one workflow could apply, pause and ask one concise clarification question (see Pause Points).
+3. Store the JSON in a temporary file or host-managed scratch file.
+4. Run the matching `gkh.py` command.
+   - **Checkpoint**: If the script returns an error, do not proceed to step 5. Report the error plainly, keep or show the temporary JSON, and ask the user whether to revise and retry.
+5. Report the result in human terms using this template:
+   - **Written**: `<page-title>` → `<relative-path>`
+   - **Sections**: list the main sections saved (e.g., 摘要, 关键决策, 下一步)
+   - **Redactions**: if any, list the types (e.g., secret, email, url); if none, say "无脱敏项"
+   - **Recall**: `search --query "<suggested-keyword>"` or `context --query "<suggested-keyword>"`
+   - Example: "已写入 `wiki/growth/reviews/skill-架构设计讨论.md`，包含摘要、决策、洞察和下一步。无脱敏项。可通过 `search --query 'skill 架构'` 召回。"
+
+For recall workflows:
+
+1. **Search strategy**: Use `search` for quick lookups, `context` for richer results with highlights. If the first search returns no results, try broader or related terms (e.g., "架构" → "设计" or "决策").
+2. **Read selectively**: Use `read` only for specific pages from search/context results. Never read the entire Wiki.
+3. **Cite sources**: When answering from recall, always cite the page path or title so the user can verify.
+4. **Handle no results**: If search returns empty, tell the user no matching local memory was found. Do not invent past decisions.
+
+### End-to-End Example
+
+User says: "我们刚才讨论了 skill 架构，帮我沉淀一下"
+
+Host CLI actions:
+1. Read `references/conversation-capture.md`
+2. Generate JSON:
+   ```json
+   {
+     "title": "Skill 架构设计讨论",
+     "captured_from": "current_conversation",
+     "summary": ["项目从独立 agent 转向 skill 化记忆层"],
+     "decisions": ["宿主 CLI 负责对话，skill 负责本地沉淀"],
+     "insights": ["长期知识闭环才是核心价值"],
+     "open_questions": ["如何同时服务多个宿主 CLI？"],
+     "next_actions": ["实现 capture 和 recall 命令"],
+     "growth_tracks": ["agent_engineering"],
+     "tags": ["skill", "architecture"]
+   }
+   ```
+3. Save to `capture.json`
+4. Run: `python scripts/gkh.py capture --input capture.json`
+5. Report: "已写入 `wiki/growth/reviews/skill-架构设计讨论.md`，包含摘要、决策、洞察和下一步。可通过 `search --query 'skill 架构'` 召回。"
+
 ## Bundled Script
 
 Run the script from the skill directory:
@@ -40,6 +96,7 @@ python scripts/gkh.py init
 python scripts/gkh.py capture --input capture.json
 python scripts/gkh.py ingest --input material.json
 python scripts/gkh.py review --input review.json
+python scripts/gkh.py project --input project.json
 python scripts/gkh.py search --query "成长知识中枢"
 python scripts/gkh.py context --query "agent 架构" --limit 5
 python scripts/gkh.py read --path "wiki/growth/reviews/example.md"
@@ -59,4 +116,26 @@ The local Wiki lives at `<data-home>/llm-wiki/`.
 - Never dump the whole Wiki into model context. Use `search` or `context`, then `read` selected pages only when needed.
 - Do not persist full third-party content by default. Save summary-first notes and source locators.
 - If the user provides secrets, tokens, private keys, or local-only material, redact or reject before writing.
-- The script does not call remote models, does not execute arbitrary skills, and does not scan repositories unless a future workflow explicitly supports it.
+- The script does not call remote models, does not execute arbitrary skills, and does not scan repositories. For project analysis, the host CLI inspects files and passes structured lessons to `project`.
+
+## Fallback
+
+When the script or data directory is unavailable, follow these fallback paths:
+
+| Situation | Trigger | Action |
+| --- | --- | --- |
+| Script not found | `python scripts/gkh.py` fails with FileNotFoundError | Tell the user the skill script is missing. Offer to locate it or check the skill installation. |
+| Data directory not writable | PermissionError on write | Tell the user the data home is not writable. Suggest checking permissions or using `--scope project` for a project-local directory. |
+| Index corrupted | `search` or `context` returns unexpected errors | Run `gkh.py index` to rebuild the index, then retry the original command. |
+| Partial write | Script exits mid-operation (e.g., wiki page written but index not updated) | Run `gkh.py index` to reconcile. Report what was written and what needs manual verification. |
+
+## Pause Points
+
+Stop and ask the user before proceeding when any of these are true:
+
+1. The request could map to more than one reference workflow.
+2. The host CLI only has raw material and cannot tell whether the user wants capture, ingest, or review.
+3. The content looks sensitive, but the host CLI has not yet decided whether redaction or rejection is more appropriate.
+4. The user asked for local project analysis, but the scope of the project lesson is unclear.
+
+These checkpoints keep the skill from turning every vague prompt into a permanent memory write.
