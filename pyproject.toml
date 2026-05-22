@@ -1,18 +1,9 @@
 [project]
-name = "personal-growth-agent"
+name = "growth-knowledge-hub"
 version = "0.1.0"
-description = "Local-first personal growth execution system"
+description = "AI CLI skill for local personal growth knowledge memory"
 requires-python = ">=3.10"
-dependencies = [
-    "prompt_toolkit>=3.0",
-    "rich>=13.0",
-]
-
-[project.scripts]
-pga = "personal_growth_agent.cli:main"
-
-[tool.setuptools.packages.find]
-include = ["personal_growth_agent", "personal_growth_agent.*"]
+dependencies = []
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

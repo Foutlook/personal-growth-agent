@@ -1,118 +1,63 @@
+# llm-wiki-maintenance Specification
+
 ## Purpose
 
-Define how the system maintains a persistent LLM Wiki as the user's long-lived, directly written knowledge base.
+Define the local `llm-wiki/` maintained by Growth Knowledge Hub as the durable personal growth knowledge store.
 
 ## Requirements
 
-### Requirement: Maintain an LLM Wiki workspace
-The system SHALL maintain a persistent llm-wiki/ workspace separate from per-run outputs.
+### Requirement: Initialize a local LLM Wiki
+The system SHALL initialize a persistent `llm-wiki/` workspace under the resolved data home.
 
-#### Scenario: LLM Wiki workspace is initialized
-- **WHEN** the system runs and no llm-wiki/ exists
-- **THEN** it creates the required top-level structure including AGENTS.md or SCHEMA.md, raw/, wiki/, machine-usable/, prompts or prompt references, report/, and data/
+#### Scenario: Wiki is initialized
+- **WHEN** the host CLI or user runs `gkh.py init`
+- **THEN** the script creates the data directory and required top-level guidance files without requiring an installed application package
 
-### Requirement: Preserve raw sources as read-only inputs
-The system MUST treat raw sources as immutable after ingestion.
+### Requirement: Preserve raw sources as traceable inputs
+The system SHALL write raw capture, material, and review sources with source metadata before writing human-readable Wiki pages.
 
-#### Scenario: Raw source already exists
-- **WHEN** the system processes a RawSource that already exists
-- **THEN** it does not overwrite the existing file and instead creates a new version or records a source manifest entry
+#### Scenario: Raw source is written
+- **WHEN** `capture`, `ingest`, or `review` accepts valid input
+- **THEN** the script writes a raw source file with title, source type, original location, captured timestamp, sensitivity, tags, and hash-derived ID
 
 ### Requirement: Track source manifest entries
-The system SHALL maintain SourceManifest records linking original local sources, RawSource entries, evidence IDs, and direct Wiki writes.
+The system SHALL maintain `llm-wiki/data/source-manifest.json` for local provenance.
 
-#### Scenario: Raw source is ingested
-- **WHEN** a conversation, repository snapshot, growth artifact, or action asset is added to raw/
-- **THEN** the system records source ID, raw source ID, original location, ingest time, source type, tool, redaction status, and hash
-
-#### Scenario: Wiki page is directly written from sources
-- **WHEN** the system writes compiled content into `wiki/`
-- **THEN** the system records direct write provenance in `data/wiki-write-log.json` and links the write to relevant source manifest entries when available
+#### Scenario: Source is ingested
+- **WHEN** the script writes a raw source
+- **THEN** it appends a source manifest entry with source ID, raw source ID, original location, source type, tool, redaction status, hash, tags, and path
 
 ### Requirement: Generate Wiki pages with frontmatter
-The system SHALL generate directly written Wiki pages with required frontmatter fields.
+The system SHALL write user-readable Markdown pages with frontmatter metadata.
 
-#### Scenario: WikiPage is created or updated
-- **WHEN** the system directly writes a WikiPage
-- **THEN** the page contains title, type, status, source_count, source_evidence_ids or source_paths, last_reviewed or generated_at, sensitivity, confidence, tracks, and related links when applicable
+#### Scenario: Wiki page is created
+- **WHEN** the script writes a capture, material, review, gap, or task page
+- **THEN** the page includes type, status, source raw IDs, captured date or period when applicable, sensitivity, tags, and workflow-specific metadata
 
-### Requirement: Generate Wiki lint reports
-The system SHALL generate Wiki Lint reports for the LLM Wiki workspace.
+### Requirement: Represent external summaries as Wiki knowledge notes
+The system SHALL represent imported external material and third-party skill summaries as user-readable Wiki knowledge notes.
 
-#### Scenario: Wiki lint runs
-- **WHEN** lint is requested or a GrowthCycle completes
-- **THEN** the system reports missing sources, broken links, stale claims, duplicate pages, privacy risks, and invalid frontmatter
+#### Scenario: External summary page is written
+- **WHEN** material ingestion writes a local summary note
+- **THEN** the page includes source locator, summary policy, full-content fetch policy, retention policy, captured date, sensitivity, tags, and source raw IDs
 
-### Requirement: Prevent unsupported deletion
-The system MUST NOT delete Wiki pages as part of LLM-generated maintenance.
+### Requirement: Represent growth reviews and tasks as Wiki pages
+The system SHALL represent host-generated growth reviews and next actions in the Wiki.
 
-#### Scenario: Page should no longer be used
-- **WHEN** a WikiPage is obsolete
-- **THEN** the system proposes marking it deprecated rather than deleting it
+#### Scenario: Growth review is written
+- **WHEN** review input is accepted
+- **THEN** the script writes a review page under `wiki/growth/reviews/` and task pages under `wiki/growth/tasks/` for next tasks
 
-### Requirement: Include growth memory directories in LLM Wiki workspace
-The system SHALL include dedicated growth memory locations in the LLM Wiki workspace while keeping automatic machine state out of the human-readable Wiki layer.
+### Requirement: Preserve indexed knowledge for recall
+The system SHALL maintain machine-readable indexes for eligible Wiki pages.
 
-#### Scenario: LLM Wiki workspace is initialized with growth memory support
-- **WHEN** the system initializes `llm-wiki/`
-- **THEN** it creates directories for `raw/growth-runs/`, `raw/growth-reviews/`, `data/growth-memory/`, `wiki/profile/`, `wiki/growth/`, `wiki/growth/reviews/`, and `wiki/cases/`
+#### Scenario: Index is rebuilt
+- **WHEN** the script runs `index`, `dashboard`, or finishes a write workflow
+- **THEN** it writes `llm-wiki/data/index.json` with page titles, paths, types, tags, summaries, source raw IDs, content hashes, and timestamps
 
-### Requirement: Extend WikiPage frontmatter for growth memory
-The system SHALL support growth memory frontmatter fields for WikiPage drafts.
+### Requirement: Prevent unsupported full-Wiki dumping
+The system MUST keep the Wiki readable by humans while recall commands expose only selected compact context to host models.
 
-#### Scenario: Growth memory page is created
-- **WHEN** the system creates a WikiPage for a growth memory object
-- **THEN** the page contains type, lifecycle status, source run ID, source evidence IDs, source raw IDs, evidence status, confidence, human confirmation state, validity window, review state, tracks, and related pages
-
-### Requirement: Preserve growth run snapshots as raw inputs
-The system MUST treat growth run snapshots and user growth reviews as raw inputs with immutable source references.
-
-#### Scenario: Growth run snapshot already exists
-- **WHEN** the system processes a previously stored growth run snapshot
-- **THEN** it does not overwrite the raw snapshot and records any new linkage through source manifest entries or new versions
-
-### Requirement: Lint growth memory pages
-The system SHALL include growth memory checks in Wiki Lint reports.
-
-#### Scenario: Growth memory page is missing traceability
-- **WHEN** a growth memory page lacks source evidence, source raw IDs, or source run metadata
-- **THEN** Wiki Lint reports a traceability issue with a suggested fix
-
-### Requirement: Include external knowledge directories in LLM Wiki workspace
-The system SHALL include dedicated directories for externally ingested knowledge in the LLM Wiki workspace.
-
-#### Scenario: LLM Wiki workspace is initialized with knowledge ingestion support
-- **WHEN** the system initializes `llm-wiki/`
-- **THEN** it creates directories for `raw/knowledge/web/`, `raw/knowledge/notes/`, `raw/knowledge/files/`, `raw/knowledge/excerpts/`, `wiki/knowledge/`, `wiki/knowledge/concepts/`, `wiki/knowledge/sources/`, and `wiki/knowledge/gaps/`
-
-### Requirement: Extend WikiPage frontmatter for external knowledge
-The system SHALL support frontmatter fields needed for externally ingested knowledge pages.
-
-#### Scenario: Knowledge Wiki page is directly written
-- **WHEN** the system creates or updates a WikiPage from external knowledge
-- **THEN** the page metadata includes type, status, source raw IDs or source paths, original URL when present, author or publisher when present, captured date, sensitivity, confidence, tags, related pages, unresolved questions when present, and generated timestamp
-
-### Requirement: Lint external knowledge pages
-The system SHALL include external knowledge checks in Wiki Lint reports.
-
-#### Scenario: Knowledge page lacks provenance
-- **WHEN** a knowledge page lacks raw source references or original source metadata
-- **THEN** Wiki Lint reports a provenance issue with a suggested fix
-
-#### Scenario: Knowledge page contains unsupported claims
-- **WHEN** a knowledge page contains claims without source references or uncertainty markers
-- **THEN** Wiki Lint reports an unsupported claim issue
-
-### Requirement: Maintain knowledge indexes
-The system SHALL maintain machine-readable indexes for knowledge pages and source relationships.
-
-#### Scenario: Knowledge proposal is generated
-- **WHEN** external knowledge is ingested or a dashboard build runs
-- **THEN** the system can produce indexes for knowledge pages, source manifest entries, backlinks, tags, and unresolved knowledge gaps
-
-### Requirement: Extend WikiPage frontmatter for growth summaries
-The system SHALL support frontmatter fields needed for compiled human-readable growth Wiki pages.
-
-#### Scenario: Growth summary page is created
-- **WHEN** the system creates or updates a compiled growth Wiki page
-- **THEN** the page contains type, source run ID, source evidence IDs, source raw IDs when applicable, evidence status, confidence, human confirmation state when applicable, tracks, related pages, and generated timestamp
+#### Scenario: Host needs memory context
+- **WHEN** the host CLI needs prior knowledge for a conversation
+- **THEN** it uses search, context, and selected read workflows rather than loading the entire Wiki

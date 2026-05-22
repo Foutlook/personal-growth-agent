@@ -1,0 +1,13 @@
+{
+  "name": "growth-knowledge-hub",
+  "version": "0.1.0",
+  "description": "Capture, ingest, review, and recall personal growth knowledge through a local LLM Wiki.",
+  "entrypoint": "SKILL.md",
+  "scripts": {
+    "gkh": "scripts/gkh.py"
+  },
+  "requires": {
+    "python": ">=3.10"
+  }
+}
+
