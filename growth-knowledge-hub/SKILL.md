@@ -56,7 +56,12 @@ For write workflows, use this loop:
    - **Recall**: `search --query "<suggested-keyword>"` or `context --query "<suggested-keyword>"`
    - Example: "已写入 `wiki/growth/reviews/skill-架构设计讨论.md`，包含摘要、决策、洞察和下一步。无脱敏项。可通过 `search --query 'skill 架构'` 召回。"
 
-For recall workflows, start with `search` or `context`. Use `read` only for selected pages from the result list.
+For recall workflows:
+
+1. **Search strategy**: Use `search` for quick lookups, `context` for richer results with highlights. If the first search returns no results, try broader or related terms (e.g., "架构" → "设计" or "决策").
+2. **Read selectively**: Use `read` only for specific pages from search/context results. Never read the entire Wiki.
+3. **Cite sources**: When answering from recall, always cite the page path or title so the user can verify.
+4. **Handle no results**: If search returns empty, tell the user no matching local memory was found. Do not invent past decisions.
 
 ### End-to-End Example
 
