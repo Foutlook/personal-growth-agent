@@ -65,7 +65,7 @@ Returns JSON with iteration records per project:
 
 ### wiki
 
-Writes `wiki/projects/<project>/iterations.md` with Markdown tables.
+Writes `wiki/projects/<project>/<project>-迭代记录.md` with Markdown tables.
 
 ## Interpretation
 

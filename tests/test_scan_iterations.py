@@ -128,7 +128,7 @@ class ScanIterationsUnitTests(unittest.TestCase):
                 "--home", str(home),
                 "scan-iterations", "--repo", str(repo), "--output", "wiki",
             )
-            iterations_md = home / "llm-wiki" / "wiki" / "projects" / repo.name / "iterations.md"
+            iterations_md = home / "llm-wiki" / "wiki" / "projects" / repo.name / f"{repo.name}-迭代记录.md"
             self.assertTrue(iterations_md.exists())
             content = iterations_md.read_text(encoding="utf-8")
             self.assertIn(f"# {repo.name} 迭代记录", content)
@@ -210,7 +210,7 @@ class ScanIterationsIntegrationTests(unittest.TestCase):
             "scan-iterations", "--repo", str(repo), "--output", "wiki",
         )
         self.assertEqual(payload["status"], "ok")
-        iterations_md = home / "llm-wiki" / "wiki" / "projects" / "proj-wiki" / "iterations.md"
+        iterations_md = home / "llm-wiki" / "wiki" / "projects" / "proj-wiki" / "proj-wiki-迭代记录.md"
         self.assertTrue(iterations_md.exists())
         content = iterations_md.read_text(encoding="utf-8")
         self.assertIn("# proj-wiki 迭代记录", content)

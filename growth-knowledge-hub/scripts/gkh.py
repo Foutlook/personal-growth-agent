@@ -1200,7 +1200,7 @@ def write_iterations_to_wiki(wiki_root: Path, project_name: str, records: list[I
     init_wiki(wiki_root)
     md = format_iterations_markdown(project_name, records)
     project_slug = slug(project_name)
-    path = wiki_root / "wiki" / "projects" / project_slug / "iterations.md"
+    path = wiki_root / "wiki" / "projects" / project_slug / f"{project_slug}-迭代记录.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(md, encoding="utf-8")
     append_json_list(
