@@ -103,6 +103,41 @@ class GrowthKnowledgeHubSkillTests(unittest.TestCase):
         self.assertTrue((self.tmp / "llm-wiki" / "data" / "wiki-write-log.json").exists())
         self.assertTrue((self.tmp / "llm-wiki" / "data" / "index.json").exists())
 
+    def test_skill_script_persists_host_generated_project_analysis(self):
+        project_input = self.write_json(
+            "project.json",
+            {
+                "project": "personal-growth-agent",
+                "title": "Growth Knowledge Hub 重构经验",
+                "summary": ["项目从独立 agent 收敛为可复用 skill。"],
+                "architecture": ["宿主 CLI 负责对话和工具调用，skill 负责本地知识沉淀。"],
+                "decisions": ["删除旧 pga CLI，保留 gkh.py 标准库脚本。"],
+                "lessons": ["不要重复造 Codex、Claude、OpenCode 已经成熟的 agent runtime。"],
+                "risks": ["project 命令只能接收宿主总结，不能自行扫描代码。"],
+                "next_actions": ["补项目经验召回入口。"],
+                "source_paths": ["growth-knowledge-hub/SKILL.md", "growth-knowledge-hub/scripts/gkh.py"],
+                "tags": ["project-analysis", "architecture"],
+            },
+        )
+
+        _project_result, project_payload = self.run_gkh("project", "--input", str(project_input))
+        _search_result, search_payload = self.run_gkh("search", "--query", "重构经验")
+
+        writes = project_payload["writes"]
+        target_paths = {write["targetPath"] for write in writes}
+        overview_path = self.tmp / "llm-wiki" / "wiki" / "projects" / "personal-growth-agent" / "overview.md"
+        overview_text = overview_path.read_text(encoding="utf-8")
+
+        self.assertEqual(project_payload["status"], "ok")
+        self.assertEqual(project_payload["kind"], "project")
+        self.assertIn("wiki/projects/personal-growth-agent/overview.md", target_paths)
+        self.assertIn("wiki/projects/personal-growth-agent/architecture.md", target_paths)
+        self.assertIn("wiki/projects/personal-growth-agent/decisions.md", target_paths)
+        self.assertIn("wiki/projects/personal-growth-agent/lessons.md", target_paths)
+        self.assertIn("wiki/projects/personal-growth-agent/risks.md", target_paths)
+        self.assertIn("source_paths:", overview_text)
+        self.assertTrue(search_payload["items"])
+
     def test_skill_script_rejects_invalid_input_without_partial_write(self):
         invalid_input = self.write_json("invalid.json", {"summary": ["missing title"]})
 

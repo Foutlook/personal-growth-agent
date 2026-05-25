@@ -31,4 +31,6 @@ python scripts/gkh.py capture --input capture.json
 - Do not include raw secrets, credentials, or full private conversation logs.
 - Capture durable meaning: decisions, reframes, reusable principles, and next actions.
 - If the discussion has no durable value, answer normally without writing.
-
+- Do not capture one-off troubleshooting chatter, temporary command output, or casual conversation unless it produced a durable decision, lesson, or next action.
+- After a successful write, tell the user the written page path, the main sections saved, and any redaction reported by the script.
+- If the script returns an error, do not say the capture succeeded. Show the error and revise the JSON before retrying.

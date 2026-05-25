@@ -30,4 +30,7 @@ python scripts/gkh.py review --input review.json
 - Keep tasks concrete and small enough to do next.
 - Link related pages when recall results or previous tasks informed the review.
 - Do not infer mastery from reading material alone; learning material is context, not capability evidence.
-
+- Do not create a review when the user only asked for a factual answer or a one-off task.
+- If recent context is insufficient, ask for the review period, focus area, or source memories before writing.
+- After a successful write, tell the user the review page path and the task pages created.
+- If the script returns an error, do not claim the review was saved. Explain what field or content needs correction.

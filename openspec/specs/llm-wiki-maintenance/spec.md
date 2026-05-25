@@ -14,10 +14,10 @@ The system SHALL initialize a persistent `llm-wiki/` workspace under the resolve
 - **THEN** the script creates the data directory and required top-level guidance files without requiring an installed application package
 
 ### Requirement: Preserve raw sources as traceable inputs
-The system SHALL write raw capture, material, and review sources with source metadata before writing human-readable Wiki pages.
+The system SHALL write raw capture, material, review, and project-analysis sources with source metadata before writing human-readable Wiki pages.
 
 #### Scenario: Raw source is written
-- **WHEN** `capture`, `ingest`, or `review` accepts valid input
+- **WHEN** `capture`, `ingest`, `review`, or `project` accepts valid input
 - **THEN** the script writes a raw source file with title, source type, original location, captured timestamp, sensitivity, tags, and hash-derived ID
 
 ### Requirement: Track source manifest entries
@@ -31,7 +31,7 @@ The system SHALL maintain `llm-wiki/data/source-manifest.json` for local provena
 The system SHALL write user-readable Markdown pages with frontmatter metadata.
 
 #### Scenario: Wiki page is created
-- **WHEN** the script writes a capture, material, review, gap, or task page
+- **WHEN** the script writes a capture, material, review, project, gap, or task page
 - **THEN** the page includes type, status, source raw IDs, captured date or period when applicable, sensitivity, tags, and workflow-specific metadata
 
 ### Requirement: Represent external summaries as Wiki knowledge notes
@@ -47,6 +47,13 @@ The system SHALL represent host-generated growth reviews and next actions in the
 #### Scenario: Growth review is written
 - **WHEN** review input is accepted
 - **THEN** the script writes a review page under `wiki/growth/reviews/` and task pages under `wiki/growth/tasks/` for next tasks
+
+### Requirement: Represent project lessons as Wiki pages
+The system SHALL represent host-generated project analysis as project Wiki pages.
+
+#### Scenario: Project analysis is written
+- **WHEN** project input is accepted
+- **THEN** the script writes `overview.md`, `architecture.md`, `decisions.md`, `lessons.md`, and `risks.md` under `wiki/projects/<project>/`
 
 ### Requirement: Preserve indexed knowledge for recall
 The system SHALL maintain machine-readable indexes for eligible Wiki pages.

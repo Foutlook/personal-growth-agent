@@ -22,3 +22,6 @@ python scripts/gkh.py read --path "wiki/growth/decisions/example.md"
 - Use `read` only for selected pages from search/context results.
 - Respect `local_only` and sensitivity metadata. If a page is local-only, do not expose its body.
 - Cite page paths or titles when answering from recall.
+- If search returns no results, say that no matching local memory was found instead of inventing a past decision.
+- If results are broad or weak, summarize the top candidates and ask which page or angle to inspect next.
+- If a read command returns an error or local-only placeholder, report that boundary and continue with safe metadata only.

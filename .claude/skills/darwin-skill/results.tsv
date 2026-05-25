@@ -1,0 +1,8 @@
+timestamp	commit	skill	old_score	new_score	status	dimension	note	eval_mode
+2026-05-22T15:00	baseline	growth-knowledge-hub	-	78.6	baseline	-	初始基线评估：Frontmatter 8, 工作流 8, 边界条件 7, 检查点 6, 指令具体性 8, 资源整合 10, 整体架构 8, 实测 8	dry_run
+2026-05-22T15:10	46ea56f	growth-knowledge-hub	78.6	80.0	keep	检查点设计	在 Execution Loop 步骤2和步骤4中嵌入显式检查点标记	dry_run
+2026-05-22T15:15	6de6fb4	growth-knowledge-hub	80.0	81.0	keep	边界条件覆盖	新增 Fallback 部分覆盖脚本不可用/目录不可写/索引损坏/部分写入	dry_run
+2026-05-22T15:20	a5a8b9b	growth-knowledge-hub	81.0	82.5	keep	指令具体性	添加字符限制和步骤5输出模板	dry_run
+2026-05-22T15:25	c102280	growth-knowledge-hub	82.5	82.5	keep	实测表现	扩展recall工作流指导：搜索策略、选择性读取、来源引用、无结果处理	dry_run
+2026-05-25T11:30	uncommitted	growth-knowledge-hub	82.5	80.1	baseline	-	新增scan-iterations后重新基线评估：资源整合度下降因Bundled Script未同步	dry_run
+2026-05-25T11:35	uncommitted	growth-knowledge-hub	80.1	84.7	keep	资源整合度	补充scan-iterations到Bundled Script和Execution Loop	dry_run

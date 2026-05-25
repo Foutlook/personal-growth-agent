@@ -33,4 +33,7 @@ python scripts/gkh.py ingest --input material.json
 - Do not persist full third-party bodies by default. Use `source_locator` and summary-first notes.
 - Include how the material might change future practice, not only what it says.
 - Mark unresolved questions clearly so they can become growth tasks later.
-
+- Do not ingest raw material if the host CLI has not summarized it into stable, user-readable points.
+- If the source is from a third-party skill, keep credentials out of all fields and store only a safe locator or provider label.
+- After a successful write, tell the user the local summary page path, whether a knowledge gap page was created, and how to recall it.
+- If the script returns an error, keep the original material transient and revise the summary JSON before retrying.

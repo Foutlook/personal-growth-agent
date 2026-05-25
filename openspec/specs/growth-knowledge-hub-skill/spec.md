@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Define the Growth Knowledge Hub skill package: a host-CLI-loadable memory layer for capturing, ingesting, reviewing, recalling, indexing, and dashboarding local personal growth knowledge.
+Define the Growth Knowledge Hub skill package: a host-CLI-loadable memory layer for capturing, ingesting, reviewing, recording project lessons, recalling, indexing, and dashboarding local personal growth knowledge.
 
 ## Requirements
 
@@ -36,11 +36,15 @@ The skill SHALL keep `SKILL.md` concise and route detailed instructions into int
 - **WHEN** the user asks what they previously decided, learned, reviewed, or planned
 - **THEN** the skill directs the host to `references/recall.md`
 
+#### Scenario: Project analysis is requested
+- **WHEN** the user asks to analyze a local project and preserve reusable lessons
+- **THEN** the skill directs the host to `references/project-analysis.md`
+
 ### Requirement: Bundle a lightweight deterministic script
 The skill SHALL bundle `scripts/gkh.py` with Python standard-library-only behavior for local deterministic operations.
 
 #### Scenario: Supported command is run
-- **WHEN** the host CLI runs `gkh.py` with `init`, `capture`, `ingest`, `review`, `search`, `read`, `context`, `index`, or `dashboard`
+- **WHEN** the host CLI runs `gkh.py` with `init`, `capture`, `ingest`, `review`, `project`, `search`, `read`, `context`, `index`, or `dashboard`
 - **THEN** the script performs the requested local operation without importing the removed standalone application package
 
 #### Scenario: Unsupported command is requested
@@ -48,10 +52,10 @@ The skill SHALL bundle `scripts/gkh.py` with Python standard-library-only behavi
 - **THEN** the script returns a non-zero exit code and does not write partial data
 
 ### Requirement: Accept host-generated structured input
-The skill SHALL rely on the host CLI's model to summarize and structure current conversations, materials, and reviews before local persistence.
+The skill SHALL rely on the host CLI's model to summarize and structure current conversations, materials, reviews, and project lessons before local persistence.
 
 #### Scenario: Valid structured input is provided
-- **WHEN** the host CLI invokes `capture`, `ingest`, or `review` with valid JSON input
+- **WHEN** the host CLI invokes `capture`, `ingest`, `review`, or `project` with valid JSON input
 - **THEN** the script validates the input, redacts unsafe content, writes local Wiki artifacts, updates provenance, and rebuilds the local index
 
 #### Scenario: Structured input is invalid
@@ -108,6 +112,17 @@ The skill SHALL support writing user-visible growth reviews and task records fro
 #### Scenario: Growth review completes
 - **WHEN** valid review input contains observations, progress, bottlenecks, knowledge gaps, next tasks, related pages, and tags
 - **THEN** the script writes a growth review page, task pages for next tasks, source manifest entries, write-log entries, and an updated index
+
+### Requirement: Record host-generated project lessons
+The skill SHALL support writing project-level memory from host-generated project analysis input without scanning repositories itself.
+
+#### Scenario: Project analysis completes
+- **WHEN** valid project input contains project name, summary, architecture, decisions, lessons, risks, next actions, source paths, and tags
+- **THEN** the script writes raw project analysis, project overview, architecture, decisions, lessons, and risks pages, source manifest entries, write-log entries, and an updated index
+
+#### Scenario: Project code inspection is needed
+- **WHEN** project analysis requires reading source files or understanding architecture
+- **THEN** the host CLI performs that inspection and passes structured project lessons to the skill script
 
 ### Requirement: Preserve privacy and provenance for writes
 The skill MUST apply privacy checks and provenance recording before local writes are committed.
