@@ -994,28 +994,30 @@ def scan_single_repo(repo_path: Path, prefix: str, warnings: list[str]) -> list[
 
 
 def discover_branches(repo_path: Path, prefix: str, warnings: list[str]) -> list[str]:
-    # Try remote branches first, fall back to local branches
-    output = git_cmd(repo_path, ["branch", "-r", "--list", f"origin/{prefix}/*"], check=False)
-    raw_branches = []
-    for line in output.splitlines():
+    # Return full ref as git expects it (e.g. "origin/release/20250601" or "release/20250601").
+    # Try remote first, fall back to local.
+    remote_output = git_cmd(repo_path, ["branch", "-r", "--list", f"origin/{prefix}/*"], check=False)
+    raw_branches: list[str] = []
+    for line in remote_output.splitlines():
         name = line.strip()
         if not name or "->" in name:
             continue
-        raw_branches.append(name.removeprefix("origin/"))
+        raw_branches.append(name)
     if not raw_branches:
-        output = git_cmd(repo_path, ["branch", "--list", f"{prefix}/*"], check=False)
-        for line in output.splitlines():
+        local_output = git_cmd(repo_path, ["branch", "--list", f"{prefix}/*"], check=False)
+        for line in local_output.splitlines():
             name = line.strip().lstrip("* ")
             if name:
                 raw_branches.append(name)
-    branches = []
-    for branch_name in raw_branches:
-        date_str = extract_date(branch_name, prefix)
+    branches: list[str] = []
+    for full_ref in raw_branches:
+        short_name = full_ref.removeprefix("origin/")
+        date_str = extract_date(short_name, prefix)
         if date_str is None:
-            warnings.append(f"{repo_path.name}: branch '{branch_name}' has no YYYYMMDD date, skipped")
+            warnings.append(f"{repo_path.name}: branch '{short_name}' has no YYYYMMDD date, skipped")
             continue
-        branches.append(branch_name)
-    branches.sort(key=lambda b: extract_date(b, prefix) or "")
+        branches.append(full_ref)
+    branches.sort(key=lambda b: extract_date(b.removeprefix("origin/"), prefix) or "")
     return branches
 
 
@@ -1034,7 +1036,8 @@ def find_default_branch(repo_path: Path) -> str:
 
 
 def build_iteration_record(repo_path: Path, base: str, branch: str, prefix: str) -> IterationRecord:
-    date_str = extract_date(branch, prefix) or ""
+    short_branch = branch.removeprefix("origin/")
+    date_str = extract_date(short_branch, prefix) or ""
     date_label = f"{date_str[4:6]}.{date_str[6:8]}" if len(date_str) == 8 else date_str
     diff_range = f"{base}..{branch}"
     stats = get_diff_stats(repo_path, diff_range)
@@ -1047,7 +1050,7 @@ def build_iteration_record(repo_path: Path, base: str, branch: str, prefix: str)
     stability = rate_stability(messages)
     conventionality = rate_conventionality(messages)
     return IterationRecord(
-        branch=branch,
+        branch=short_branch,
         date_label=date_label,
         main_topics=main_topics,
         author_count=len(authors),
@@ -1088,7 +1091,7 @@ def get_author_stats(repo_path: Path, diff_range: str) -> list[AuthorStats]:
             commits = int(match.group(1))
             name = match.group(2).strip()
             authors.append(AuthorStats(name=name, commits=commits, additions=0, deletions=0))
-    numstat = git_cmd(repo_path, ["log", "--numstat", "--format=", "--no-merges", diff_range])
+    numstat = git_cmd(repo_path, ["log", "--numstat", "--format=Author: %an", "--no-merges", diff_range])
     author_lines: dict[str, tuple[int, int]] = {}
     current_author = ""
     for line in numstat.splitlines():
