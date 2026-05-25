@@ -945,7 +945,7 @@ def scan_iterations_command(
         except Exception as exc:
             warnings.append(f"{project_name}: {exc}")
             continue
-        if output == "wiki":
+        if output == "wiki" and records:
             write_iterations_to_wiki(wiki_root, project_name, records)
         results.append({
             "project": project_name,
