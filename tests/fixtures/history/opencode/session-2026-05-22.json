@@ -1,0 +1,14 @@
+{
+  "id": "opencode-session-1",
+  "timestamp": "2026-05-22T08:15:00Z",
+  "conversation": [
+    {
+      "role": "user",
+      "text": "Add recall support for historical CLI context."
+    },
+    {
+      "role": "assistant",
+      "text": "Use compact summaries and preserve provenance."
+    }
+  ]
+}

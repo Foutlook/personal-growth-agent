@@ -1,0 +1,2 @@
+{"timestamp":"2026-05-20T10:00:00Z","role":"user","content":"请帮我设计 analyze-history 命令。"}
+{"timestamp":"2026-05-20T10:01:00Z","role":"assistant","content":"可以，先保持显式扫描历史会话。"}

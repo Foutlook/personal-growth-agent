@@ -40,11 +40,15 @@ The skill SHALL keep `SKILL.md` concise and route detailed instructions into int
 - **WHEN** the user asks to analyze a local project and preserve reusable lessons
 - **THEN** the skill directs the host to `references/project-analysis.md`
 
+#### Scenario: Host CLI history analysis is requested
+- **WHEN** the user asks to analyze prior Codex, Claude Code, OpenCode, or all supported host CLI conversations
+- **THEN** the skill directs the host to a history-analysis reference workflow before invoking `analyze-history`
+
 ### Requirement: Bundle a lightweight deterministic script
 The skill SHALL bundle `scripts/gkh.py` with Python standard-library-only behavior for local deterministic operations.
 
 #### Scenario: Supported command is run
-- **WHEN** the host CLI runs `gkh.py` with `init`, `capture`, `ingest`, `review`, `project`, `search`, `read`, `context`, `index`, or `dashboard`
+- **WHEN** the host CLI runs `gkh.py` with `init`, `capture`, `ingest`, `review`, `project`, `analyze-history`, `search`, `read`, `context`, `index`, or `dashboard`
 - **THEN** the script performs the requested local operation without importing the removed standalone application package
 
 #### Scenario: Unsupported command is requested
@@ -94,6 +98,17 @@ The skill SHALL support capturing the current host CLI discussion as durable loc
 #### Scenario: Conversation capture completes
 - **WHEN** valid capture input contains title, summary, decisions, insights, open questions, next actions, growth tracks, and tags
 - **THEN** the script writes a raw capture, a human-readable growth page, source manifest entries, write-log entries, and an updated index
+
+### Requirement: Keep current conversation capture separate from history analysis
+The skill SHALL keep `capture` scoped to host-generated current conversation input and SHALL use `analyze-history` for explicit historical session scanning.
+
+#### Scenario: Current conversation is captured
+- **WHEN** the host CLI invokes `capture` with valid structured input
+- **THEN** the script writes only the provided current-conversation capture data and does not scan host CLI history directories
+
+#### Scenario: Historical conversations are analyzed
+- **WHEN** the host CLI invokes `analyze-history`
+- **THEN** the script follows the explicit history analysis workflow instead of the current conversation capture workflow
 
 ### Requirement: Ingest external material as learning knowledge
 The skill SHALL support persisting host-summarized external material into the local Wiki without mirroring full third-party content by default.
