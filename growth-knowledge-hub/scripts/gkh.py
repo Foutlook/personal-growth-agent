@@ -16,6 +16,8 @@ from typing import Any
 from uuid import uuid4
 
 
+VALID_STAGES = {"L1", "L2", "L3", "L4"}
+
 SECRET_RE = re.compile(r"(?i)(sk-[a-z0-9_-]+|token\s*=\s*[^ \n]+|api[_-]?key\s*=\s*[^ \n]+)")
 EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
 URL_RE = re.compile(r"https?://[^\s)]+")
@@ -29,6 +31,24 @@ class WriteResult:
     path: Path
     operation: str
     source_raw_ids: list[str]
+    content_hash: str
+
+
+@dataclass
+class HistoryMessage:
+    role: str
+    content: str
+    timestamp: str
+
+
+@dataclass
+class HistorySession:
+    source: str
+    session_id: str
+    started_at: str
+    title: str
+    messages: list[HistoryMessage]
+    path: Path
     content_hash: str
 
 
@@ -70,6 +90,19 @@ def main(argv: list[str] | None = None) -> int:
     scan_parser.add_argument("--branch-prefix", default="release", help="Branch name prefix to scan (default: release).")
     scan_parser.add_argument("--output", choices=["stdout", "wiki"], default="stdout", help="Output target.")
 
+    history_parser = subparsers.add_parser("analyze-history")
+    history_parser.add_argument("--source", choices=["codex", "claude", "opencode", "all"], required=True)
+    history_parser.add_argument("--source-dir", type=Path, default=None)
+    history_parser.add_argument("--source-map", action="append", default=[])
+    history_parser.add_argument("--since", default="")
+    history_parser.add_argument("--until", default="")
+    history_parser.add_argument("--limit", type=int, default=50)
+    history_parser.add_argument("--dry-run", action="store_true")
+    history_parser.add_argument("--output", choices=["stdout", "json", "wiki"], default="stdout")
+
+    gen_tasks_parser = subparsers.add_parser("generate-tasks")
+    gen_tasks_parser.add_argument("--input", required=True, type=Path)
+
     subparsers.add_parser("index")
     subparsers.add_parser("dashboard")
 
@@ -106,6 +139,22 @@ def main(argv: list[str] | None = None) -> int:
             return print_json({"status": "ok", "indexPath": str(wiki_root / "data" / "index.json"), "count": len(index)})
         if args.command == "scan-iterations":
             result = scan_iterations_command(args.repo, args.dir, args.branch_prefix, args.output, wiki_root)
+            return print_json(result)
+        if args.command == "analyze-history":
+            result = analyze_history_command(
+                args.source,
+                args.source_dir,
+                args.source_map,
+                args.since,
+                args.until,
+                args.limit,
+                args.dry_run,
+                args.output,
+                wiki_root,
+            )
+            return print_json(result)
+        if args.command == "generate-tasks":
+            result = write_generate_tasks(wiki_root, read_input(args.input))
             return print_json(result)
         if args.command == "dashboard":
             result = build_dashboard(home, wiki_root)
@@ -185,6 +234,7 @@ def write_capture(root: Path, data: dict[str, Any]) -> dict[str, Any]:
     next_actions = string_list(data, "next_actions")
     tags = string_list(data, "tags", required=False)
     tracks = string_list(data, "growth_tracks", required=False)
+    growth_tasks = _parse_growth_tasks(data)
     source_text = "\n".join(summary + decisions + insights + open_questions + next_actions)
     safe_text, sensitivity, findings = redact_or_reject(source_text)
     summary = redact_items(summary)
@@ -223,8 +273,69 @@ def write_capture(root: Path, data: dict[str, Any]) -> dict[str, Any]:
     body += "\n## 来源\n"
     body += f"- {raw_source['rawSourceId']}: {raw_source['path']}\n"
     write = write_wiki_page(root, f"wiki/growth/reviews/{slug(title)}.md", body, [raw_source["rawSourceId"]])
+    task_writes = _write_growth_tasks(root, growth_tasks, title, tags, [raw_source["rawSourceId"]])
     rebuild_index(root)
-    return {"status": "ok", "kind": "capture", "rawSource": raw_source, "writes": [write_to_dict(write)], "redactions": findings}
+    writes = [write_to_dict(write), *task_writes]
+    return {"status": "ok", "kind": "capture", "rawSource": raw_source, "writes": writes, "redactions": findings}
+
+
+def _parse_growth_tasks(data: dict[str, Any]) -> list[dict[str, str]]:
+    raw = data.get("growth_tasks")
+    if not raw or not isinstance(raw, list):
+        return []
+    tasks: list[dict[str, str]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            raise ValueError("each growth_task must be an object")
+        title = str(item.get("title") or "").strip()
+        if not title:
+            raise ValueError("growth_task.title is required")
+        stage = str(item.get("stage") or "").strip()
+        if stage and stage not in VALID_STAGES:
+            raise ValueError(f"growth_task.stage must be one of {sorted(VALID_STAGES)}, got: {stage}")
+        tasks.append({
+            "title": title,
+            "stage": stage,
+            "done_definition": str(item.get("done_definition") or "").strip(),
+            "rationale": str(item.get("rationale") or "").strip(),
+        })
+    return tasks
+
+
+def _write_growth_tasks(
+    root: Path,
+    tasks: list[dict[str, str]],
+    source_title: str,
+    tags: list[str],
+    source_raw_ids: list[str],
+) -> list[dict[str, Any]]:
+    writes: list[dict[str, Any]] = []
+    for task in tasks:
+        result = write_task_page(
+            root,
+            task["title"],
+            task["stage"],
+            task["done_definition"],
+            task["rationale"],
+            source_title,
+            tags,
+            source_raw_ids,
+        )
+        writes.append(result if isinstance(result, dict) else write_to_dict(result))
+    return writes
+
+
+def write_generate_tasks(root: Path, data: dict[str, Any]) -> dict[str, Any]:
+    init_wiki(root)
+    source = str(data.get("source") or "manual").strip()
+    tasks = _parse_growth_tasks(data)
+    if not tasks:
+        raise ValueError("growth_tasks list is required and must not be empty")
+    source_title = f"任务生成：{source}"
+    tags = [source, "auto_generated"]
+    task_writes = _write_growth_tasks(root, tasks, source_title, tags, [])
+    rebuild_index(root)
+    return {"status": "ok", "kind": "generate_tasks", "source": source, "count": len(tasks), "writes": task_writes}
 
 
 def write_material(root: Path, data: dict[str, Any]) -> dict[str, Any]:
@@ -326,9 +437,10 @@ def write_review(root: Path, data: dict[str, Any]) -> dict[str, Any]:
     write = write_wiki_page(root, f"wiki/growth/reviews/{slug(title)}.md", body, [raw_source["rawSourceId"]])
     task_writes = []
     for task in next_tasks:
-        task_writes.append(write_task_page(root, task, title, tags, [raw_source["rawSourceId"]]))
+        result = write_task_page(root, task, "", "", "", title, tags, [raw_source["rawSourceId"]])
+        task_writes.append(result if isinstance(result, dict) else write_to_dict(result))
     rebuild_index(root)
-    writes = [write_to_dict(write), *[write_to_dict(item) for item in task_writes]]
+    writes = [write_to_dict(write), *task_writes]
     return {"status": "ok", "kind": "review", "rawSource": raw_source, "writes": writes, "redactions": findings}
 
 
@@ -532,23 +644,49 @@ def write_gap_page(root: Path, title: str, questions: list[str], tags: list[str]
     return write_wiki_page(root, f"wiki/knowledge/gaps/{slug(title)}.md", body, source_raw_ids)
 
 
-def write_task_page(root: Path, task: str, review_title: str, tags: list[str], source_raw_ids: list[str]) -> WriteResult:
-    task_title = task[:80]
-    body = frontmatter(
-        {
-            "type": "growth_task",
-            "status": "active",
-            "source_raw_ids": source_raw_ids,
-            "captured_date": now_iso(),
-            "sensitivity": "safe",
-            "tags": tags,
-        }
-    )
-    body += f"\n# {task_title}\n\n"
-    body += f"来源复盘：{review_title}\n\n"
-    body += "## 任务\n"
-    body += f"- {task}\n"
-    return write_wiki_page(root, f"wiki/growth/tasks/{slug(task_title)}.md", body, source_raw_ids)
+def write_task_page(
+    root: Path,
+    task_title: str,
+    stage: str,
+    done_definition: str,
+    rationale: str,
+    source_title: str,
+    tags: list[str],
+    source_raw_ids: list[str],
+) -> WriteResult | dict[str, str]:
+    if stage and stage not in VALID_STAGES:
+        raise ValueError(f"stage must be one of {sorted(VALID_STAGES)}, got: {stage}")
+    short_title = task_title[:80]
+    prefix = f"{stage}-" if stage else ""
+    relative_path = f"wiki/growth/tasks/{prefix}{slug(short_title)}.md"
+    existing_path = root / relative_path
+    if existing_path.exists():
+        existing_text = existing_path.read_text(encoding="utf-8")
+        existing_meta = parse_frontmatter(existing_text)
+        if existing_meta.get("status") == "active":
+            return {"skipped": "duplicate_active", "path": relative_path}
+    meta: dict[str, Any] = {
+        "type": "growth_task",
+        "status": "active",
+        "source_raw_ids": source_raw_ids,
+        "captured_date": now_iso(),
+        "sensitivity": "safe",
+        "tags": tags,
+    }
+    if stage:
+        meta["stage"] = stage
+    if done_definition:
+        meta["done_definition"] = done_definition
+    body = frontmatter(meta)
+    body += f"\n# {short_title}\n\n"
+    body += f"来源：{source_title}\n\n"
+    if stage:
+        body += f"## 阶段\n{stage}\n\n"
+    if done_definition:
+        body += f"## 完成定义\n{done_definition}\n\n"
+    if rationale:
+        body += f"## 生成依据\n{rationale}\n\n"
+    return write_wiki_page(root, relative_path, body, source_raw_ids)
 
 
 def frontmatter(data: dict[str, Any]) -> str:
@@ -767,6 +905,415 @@ h1{{font-size:28px}} h2{{font-size:18px}} code{{color:#52606d}}
 """
     entry.write_text(html_text, encoding="utf-8")
     return {"status": "ok", "entryPath": str(entry), "pageCount": len(index)}
+
+
+# ---------------------------------------------------------------------------
+# analyze-history
+# ---------------------------------------------------------------------------
+
+HISTORY_SOURCES = ("codex", "claude", "opencode")
+
+
+def analyze_history_command(
+    source: str,
+    source_dir: Path | None,
+    source_maps: list[str],
+    since: str,
+    until: str,
+    limit: int,
+    dry_run: bool,
+    output: str,
+    wiki_root: Path,
+) -> dict[str, Any]:
+    source_map = parse_source_maps(source_maps)
+    selected_sources = list(HISTORY_SOURCES) if source == "all" else [source]
+    validate_history_args(source, source_dir, source_map, limit)
+    since_date = parse_date_filter(since, "since")
+    until_date = parse_date_filter(until, "until")
+    warnings: list[str] = []
+    sessions: list[HistorySession] = []
+    source_results: list[dict[str, Any]] = []
+    seen_hashes: set[str] = set()
+    for item_source in selected_sources:
+        resolved_dir = resolve_history_source_dir(item_source, source, source_dir, source_map, warnings)
+        if resolved_dir is None:
+            source_results.append({"source": item_source, "path": "", "analyzed": 0, "warnings": ["source directory not found"]})
+            continue
+        parsed_sessions = parse_history_source(item_source, resolved_dir, warnings)
+        filtered_sessions = filter_history_sessions(parsed_sessions, since_date, until_date)
+        accepted: list[HistorySession] = []
+        for session in filtered_sessions:
+            if session.content_hash in seen_hashes:
+                warnings.append(f"{item_source}: duplicate session skipped: {session.path}")
+                continue
+            seen_hashes.add(session.content_hash)
+            accepted.append(session)
+            if len(sessions) + len(accepted) >= max(0, limit):
+                break
+        sessions.extend(accepted)
+        source_results.append({"source": item_source, "path": str(resolved_dir), "analyzed": len(accepted), "warnings": []})
+        if len(sessions) >= max(0, limit):
+            break
+    analyzed_items = [compact_history_session(session) for session in sessions]
+    result: dict[str, Any] = {
+        "status": "ok",
+        "kind": "history_analysis",
+        "dryRun": dry_run,
+        "output": output,
+        "analyzed": len(analyzed_items),
+        "sources": source_results,
+        "sessions": analyzed_items,
+        "warnings": warnings,
+    }
+    if output == "wiki" and not dry_run:
+        writes = write_history_to_wiki(wiki_root, sessions)
+        result["writes"] = [write_to_dict(write) for write in writes]
+    return result
+
+
+def validate_history_args(source: str, source_dir: Path | None, source_map: dict[str, Path], limit: int) -> None:
+    if source == "all" and source_dir is not None:
+        raise ValueError("--source all cannot use --source-dir; use repeated --source-map source=path entries")
+    if limit < 0:
+        raise ValueError("--limit must be non-negative")
+    for key in source_map:
+        if key not in HISTORY_SOURCES:
+            raise ValueError(f"unknown source in --source-map: {key}")
+
+
+def parse_source_maps(values: list[str]) -> dict[str, Path]:
+    result: dict[str, Path] = {}
+    for value in values:
+        if "=" not in value:
+            raise ValueError("--source-map must use source=path")
+        key, raw_path = value.split("=", 1)
+        source = key.strip().lower()
+        if source not in HISTORY_SOURCES:
+            raise ValueError(f"unknown source in --source-map: {source}")
+        result[source] = Path(raw_path).expanduser().resolve()
+    return result
+
+
+def parse_date_filter(value: str, label: str) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError(f"--{label} must use YYYY-MM-DD") from exc
+
+
+def resolve_history_source_dir(
+    item_source: str,
+    requested_source: str,
+    source_dir: Path | None,
+    source_map: dict[str, Path],
+    warnings: list[str],
+) -> Path | None:
+    if item_source in source_map:
+        mapped = source_map[item_source]
+        if mapped.is_dir():
+            return mapped
+        warnings.append(f"{item_source}: mapped source directory not found: {mapped}")
+        return None
+    if requested_source != "all" and source_dir is not None:
+        resolved = source_dir.expanduser().resolve()
+        if resolved.is_dir():
+            return resolved
+        raise ValueError(f"source directory not found: {resolved}")
+    discovered = discover_history_source_dir(item_source)
+    if discovered is not None:
+        return discovered
+    warnings.append(f"{item_source}: source directory not found; provide --source-dir or --source-map")
+    return None
+
+
+def discover_history_source_dir(source: str) -> Path | None:
+    home = Path.home()
+    candidates: list[Path] = []
+    if source == "codex":
+        candidates = [home / ".codex" / "sessions", home / ".codex" / "history"]
+    elif source == "claude":
+        candidates = [home / ".claude" / "projects", home / ".claude" / "sessions"]
+    elif source == "opencode":
+        candidates = [
+            home / ".opencode" / "sessions",
+            home / "AppData" / "Local" / "opencode",
+            home / ".local" / "share" / "opencode",
+        ]
+    for candidate in candidates:
+        if candidate.is_dir():
+            return candidate.resolve()
+    return None
+
+
+def parse_history_source(source: str, source_dir: Path, warnings: list[str]) -> list[HistorySession]:
+    sessions: list[HistorySession] = []
+    for path in sorted(source_dir.rglob("*")):
+        if not path.is_file() or path.suffix.lower() not in {".json", ".jsonl"}:
+            continue
+        try:
+            session = parse_history_file(source, path)
+        except Exception as exc:
+            warnings.append(f"{source}: skipped {path}: {exc}")
+            continue
+        if session is None:
+            warnings.append(f"{source}: skipped unsupported file: {path}")
+            continue
+        if contains_private_key(session):
+            warnings.append(f"{source}: skipped private key session: {path}")
+            continue
+        sessions.append(session)
+    sessions.sort(key=lambda item: item.started_at or "")
+    return sessions
+
+
+def parse_history_file(source: str, path: Path) -> HistorySession | None:
+    if path.suffix.lower() == ".jsonl":
+        messages = parse_jsonl_messages(path)
+        return make_history_session(source, path, "", messages)
+    value = json.loads(path.read_text(encoding="utf-8-sig"))
+    if isinstance(value, dict):
+        messages = parse_json_messages(value)
+        session_id = str(value.get("session_id") or value.get("id") or "")
+        return make_history_session(source, path, session_id, messages, value)
+    if isinstance(value, list):
+        messages = parse_message_list(value)
+        return make_history_session(source, path, "", messages)
+    return None
+
+
+def parse_jsonl_messages(path: Path) -> list[HistoryMessage]:
+    messages: list[HistoryMessage] = []
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
+        if not line.strip():
+            continue
+        value = json.loads(line)
+        if isinstance(value, dict):
+            message = history_message_from_dict(value)
+            if message is not None:
+                messages.append(message)
+    return messages
+
+
+def parse_json_messages(value: dict[str, Any]) -> list[HistoryMessage]:
+    for key in ("messages", "conversation", "turns"):
+        raw_messages = value.get(key)
+        if isinstance(raw_messages, list):
+            return parse_message_list(raw_messages)
+    return []
+
+
+def parse_message_list(values: list[Any]) -> list[HistoryMessage]:
+    messages: list[HistoryMessage] = []
+    for value in values:
+        if isinstance(value, dict):
+            message = history_message_from_dict(value)
+            if message is not None:
+                messages.append(message)
+    return messages
+
+
+def history_message_from_dict(value: dict[str, Any]) -> HistoryMessage | None:
+    role = str(value.get("role") or value.get("type") or value.get("speaker") or "").strip().lower()
+    if role not in {"user", "assistant", "system", "tool"}:
+        return None
+    content_value = value.get("content")
+    if content_value is None:
+        content_value = value.get("text")
+    content = stringify_history_content(content_value)
+    if not content:
+        return None
+    timestamp = str(value.get("timestamp") or value.get("created_at") or value.get("time") or "").strip()
+    return HistoryMessage(role=role, content=content, timestamp=timestamp)
+
+
+def stringify_history_content(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, list):
+        parts = [stringify_history_content(item) for item in value]
+        return "\n".join(part for part in parts if part).strip()
+    if isinstance(value, dict):
+        for key in ("text", "content", "value"):
+            if key in value:
+                return stringify_history_content(value.get(key))
+        return json.dumps(value, ensure_ascii=False)
+    return str(value).strip()
+
+
+def make_history_session(
+    source: str,
+    path: Path,
+    session_id: str,
+    messages: list[HistoryMessage],
+    metadata: dict[str, Any] | None = None,
+) -> HistorySession | None:
+    if not messages:
+        return None
+    metadata = metadata or {}
+    started_at = first_non_empty(
+        str(metadata.get("created_at") or ""),
+        str(metadata.get("timestamp") or ""),
+        str(metadata.get("started_at") or ""),
+        messages[0].timestamp,
+    )
+    title = first_non_empty(str(metadata.get("title") or ""), first_user_prompt(messages)[:80], path.stem)
+    content_seed = "\n".join(f"{message.role}:{message.content}" for message in messages)
+    digest = sha256_text(f"{source}|{path}|{started_at}|{content_seed}")
+    stable_session_id = session_id or stable_id("session", source, started_at, digest)
+    return HistorySession(
+        source=source,
+        session_id=stable_session_id,
+        started_at=started_at,
+        title=title,
+        messages=messages,
+        path=path,
+        content_hash=digest,
+    )
+
+
+def first_non_empty(*values: str) -> str:
+    for value in values:
+        stripped = value.strip()
+        if stripped:
+            return stripped
+    return ""
+
+
+def contains_private_key(session: HistorySession) -> bool:
+    text = "\n".join(message.content for message in session.messages)
+    return bool(PRIVATE_KEY_RE.search(text))
+
+
+def filter_history_sessions(
+    sessions: list[HistorySession],
+    since_date: datetime | None,
+    until_date: datetime | None,
+) -> list[HistorySession]:
+    result: list[HistorySession] = []
+    for session in sessions:
+        session_date = parse_history_datetime(session.started_at)
+        if since_date is not None and session_date is not None and session_date < since_date:
+            continue
+        if until_date is not None and session_date is not None and session_date > until_date:
+            continue
+        result.append(session)
+    return result
+
+
+def parse_history_datetime(value: str) -> datetime | None:
+    if not value:
+        return None
+    normalized = value.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is not None:
+        return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
+
+
+def compact_history_session(session: HistorySession) -> dict[str, Any]:
+    snippets = redacted_history_snippets(session.messages)
+    findings: list[dict[str, str]] = []
+    redacted_prompt, _sensitivity, prompt_findings = redact_or_reject(first_user_prompt(session.messages))
+    findings.extend(prompt_findings)
+    return {
+        "source": session.source,
+        "sessionId": session.session_id,
+        "startedAt": session.started_at,
+        "title": redact_inline(session.title),
+        "path": str(session.path),
+        "messageCount": len(session.messages),
+        "first_user_prompt": redacted_prompt[:300],
+        "snippets": snippets,
+        "keywords": history_keywords(session.messages),
+        "contentHash": session.content_hash,
+        "redactions": findings,
+    }
+
+
+def first_user_prompt(messages: list[HistoryMessage]) -> str:
+    for message in messages:
+        if message.role == "user":
+            return message.content
+    return messages[0].content if messages else ""
+
+
+def redacted_history_snippets(messages: list[HistoryMessage]) -> list[str]:
+    snippets: list[str] = []
+    for message in messages:
+        if message.role not in {"user", "assistant"}:
+            continue
+        snippet = redact_inline(message.content.replace("\n", " "))[:240]
+        snippets.append(f"{message.role}: {snippet}")
+        if len(snippets) == 3:
+            break
+    return snippets
+
+
+def history_keywords(messages: list[HistoryMessage]) -> list[str]:
+    text = " ".join(message.content for message in messages).lower()
+    counts: dict[str, int] = {}
+    for word in re.split(r"[\s,.;:!?()\[\]{}<>\"'`/\\|]+", text):
+        cleaned = word.strip("-_")
+        if len(cleaned) < 4 or cleaned in STOP_WORDS:
+            continue
+        counts[cleaned] = counts.get(cleaned, 0) + 1
+    return [word for word, _count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:8]]
+
+
+def write_history_to_wiki(root: Path, sessions: list[HistorySession]) -> list[WriteResult]:
+    init_wiki(root)
+    writes: list[WriteResult] = []
+    by_source: dict[str, list[dict[str, Any]]] = {}
+    for session in sessions:
+        item = compact_history_session(session)
+        source_text = "\n".join(item["snippets"])
+        safe_text, sensitivity, _findings = redact_or_reject(source_text)
+        raw_source = write_raw(
+            root,
+            f"{session.source}_history_session",
+            "conversations",
+            str(item["title"]),
+            str(session.path),
+            safe_text,
+            sensitivity,
+            ["history", session.source],
+        )
+        item["rawSourceId"] = raw_source["rawSourceId"]
+        by_source.setdefault(session.source, []).append(item)
+    for source, items in sorted(by_source.items()):
+        body = frontmatter(
+            {
+                "type": "history_analysis",
+                "status": "ready",
+                "source_raw_ids": [str(item.get("rawSourceId") or "") for item in items],
+                "captured_date": now_iso(),
+                "sensitivity": "safe",
+                "tags": ["history", source],
+            }
+        )
+        body += f"\n# {source} 历史会话分析\n\n"
+        first_prompts = [str(item.get("first_user_prompt") or "") for item in items]
+        summary_prompt = "；".join(prompt for prompt in first_prompts if prompt)[:500]
+        body += f"摘要：共分析 {len(items)} 个历史会话。{summary_prompt}\n\n"
+        for item in items:
+            body += f"## {item['title']}\n"
+            body += f"- Source: {item['source']}\n"
+            body += f"- Started: {item['startedAt'] or 'unknown'}\n"
+            body += f"- Session: {item['sessionId']}\n"
+            body += f"- First user prompt: {item['first_user_prompt'] or '暂无'}\n"
+            body += f"- Keywords: {', '.join(item['keywords']) or '暂无'}\n"
+            body += "\n"
+        write = write_wiki_page(root, f"wiki/history/{source}-history.md", body, [str(item.get("rawSourceId") or "") for item in items])
+        writes.append(write)
+    rebuild_index(root)
+    return writes
 
 
 def compact_result(item: dict[str, Any], score: int) -> dict[str, Any]:

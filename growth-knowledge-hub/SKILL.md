@@ -1,6 +1,6 @@
 ---
 name: growth-knowledge-hub
-description: Use this skill whenever the user wants to沉淀, capture, save, recall, search, review, or organize personal growth knowledge, current AI collaboration discussions, external learning material, notes, articles, knowledge-base summaries, or local project lessons into a durable local LLM Wiki. Also use it when the user asks what they previously decided, learned, reviewed, or planned, because the skill can recall compact context from the local growth knowledge base.
+description: Use this skill whenever the user wants to沉淀, capture, save, recall, search, review, or organize personal growth knowledge, current AI collaboration discussions, historical AI CLI conversations, external learning material, notes, articles, knowledge-base summaries, or local project lessons into a durable local LLM Wiki. Also use it when the user asks what they previously decided, learned, reviewed, or planned, because the skill can recall compact context from the local growth knowledge base.
 compatibility: Requires Python 3.10+ for bundled standard-library scripts.
 ---
 
@@ -14,6 +14,7 @@ Use this skill for:
 - Saving external materials, articles, notes, or third-party knowledge summaries.
 - Writing growth reviews, bottlenecks, knowledge gaps, and next actions.
 - Recalling prior decisions, lessons, summaries, tasks, and growth notes.
+- Explicitly analyzing prior Codex, Claude Code, or OpenCode conversation history.
 - Scanning project git repositories for iteration records and team patterns.
 - Building a local no-server dashboard for the knowledge base.
 
@@ -31,7 +32,9 @@ Read only the reference needed for the user's current intent:
 | "整理这篇文章", "保存资料", "导入知识库摘要", "ingest this material" | `references/material-ingest.md` |
 | "做一次复盘", "本周成长回顾", "下一步怎么练" | `references/growth-review.md` |
 | "我之前怎么想的", "查一下我的知识库", "recall prior decisions" | `references/recall.md` |
+| "分析历史对话", "扫描 Codex/Claude/OpenCode 会话", "analyze CLI history" | `references/history-analysis.md` |
 | "扫描项目迭代", "迭代记录", "release 分支历史", "scan iterations" | `references/scan-iterations.md` |
+| "生成成长任务", "分析对话生成下一步任务", "generate growth tasks" | `references/growth-stage-model.md` |
 | Need exact local Wiki layout or metadata rules | `references/llm-wiki-schema.md` |
 | Local project analysis request | `references/project-analysis.md` |
 
@@ -44,6 +47,7 @@ For write workflows, use this loop:
 1. Select exactly one reference workflow and read it.
 2. Extract structured data from the conversation or material:
    - **capture**: Pull `title` (topic), `summary` (3-5 bullet points, each ≤ 100 chars), `decisions` (what was decided), `insights` (non-obvious takeaways), `next_actions` (concrete next steps). Use the user's own words for key decisions.
+     - **Auto-generate growth tasks**: After extracting the above, read `references/growth-stage-model.md` and assess which stage this conversation reflects. Then generate 1-3 `growth_tasks` that push the user toward the next stage. Each task needs `title` (concrete action, ≤ 80 chars), `stage` (L1-L4), `done_definition` (how to know it's done), and `rationale` (why this task now). Only generate tasks when the conversation has genuine growth value — not for trivial edits.
    - **ingest**: Pull `title`, `summary_points` (max 6 durable points, each ≤ 200 chars), `key_concepts` (terms to remember), `why_it_matters` (how this changes practice), `application_ideas` (what to do with this knowledge).
    - **review**: Pull `title`, `period` (e.g. "2026-W21"), `observations` (what happened), `progress` (what moved forward), `bottlenecks` (what blocked), `knowledge_gaps` (what's missing), `next_tasks` (concrete small tasks, each ≤ 80 chars).
    - **project**: Let the host CLI inspect the project with its normal tools, then pull `project`, `summary`, `architecture`, `decisions`, `lessons`, `risks`, `next_actions`, and `source_paths`.
@@ -64,6 +68,26 @@ For scan-iterations workflow:
 2. Run: `python scripts/gkh.py scan-iterations --dir <path> --branch-prefix release --output wiki`
 3. Report: project count, iteration count, any warnings (skipped branches, non-git dirs).
 4. If `--output wiki` was used, tell the user the page paths written.
+
+For history-analysis workflow:
+
+1. Read `references/history-analysis.md` for parameters and safety boundaries.
+2. Prefer a dry run first for broad scans:
+   `python scripts/gkh.py analyze-history --source all --dry-run --output stdout`
+3. If the user provided explicit directories, use `--source-dir` for one source or repeated `--source-map source=path` entries for `--source all`.
+4. Report analyzed session count, written history pages, and warnings for missing or skipped sources.
+
+For generate-tasks workflow:
+
+1. Read `references/growth-stage-model.md` for the stage definitions and task generation guidance.
+2. Analyze the user's recent conversations (from current session or history-analysis results).
+3. Determine the user's current stage based on conversation content.
+4. Generate 1-5 concrete tasks that push toward the next stage.
+5. Write to a JSON file and run:
+   ```bash
+   python scripts/gkh.py generate-tasks --input tasks.json
+   ```
+6. Report: tasks created, tasks skipped (duplicates), and their stage levels.
 
 For recall workflows:
 
@@ -88,7 +112,14 @@ Host CLI actions:
      "insights": ["长期知识闭环才是核心价值"],
      "open_questions": ["如何同时服务多个宿主 CLI？"],
      "next_actions": ["实现 capture 和 recall 命令"],
-     "growth_tracks": ["agent_engineering"],
+     "growth_tasks": [
+       {
+         "title": "为一个现有 skill 编写 SKILL.md，控制 agent 的工具选择行为",
+         "stage": "L2",
+         "done_definition": "SKILL.md 能让 agent 在 3 个场景下选择正确的工具",
+         "rationale": "当前对话展示了架构设计能力（L3），但 prompt 工程基础（L2）需要巩固"
+       }
+     ],
      "tags": ["skill", "architecture"]
    }
    ```
@@ -106,7 +137,9 @@ python scripts/gkh.py capture --input capture.json
 python scripts/gkh.py ingest --input material.json
 python scripts/gkh.py review --input review.json
 python scripts/gkh.py project --input project.json
+python scripts/gkh.py analyze-history --source all --output wiki
 python scripts/gkh.py scan-iterations --dir /path/to/projects --branch-prefix release --output wiki
+python scripts/gkh.py generate-tasks --input tasks.json
 python scripts/gkh.py search --query "成长知识中枢"
 python scripts/gkh.py context --query "agent 架构" --limit 5
 python scripts/gkh.py read --path "wiki/growth/reviews/example.md"
@@ -126,7 +159,7 @@ The local Wiki lives at `<data-home>/llm-wiki/`.
 - Never dump the whole Wiki into model context. Use `search` or `context`, then `read` selected pages only when needed.
 - Do not persist full third-party content by default. Save summary-first notes and source locators.
 - If the user provides secrets, tokens, private keys, or local-only material, redact or reject before writing.
-- The script does not call remote models, does not execute arbitrary skills, and does not scan repositories. For project analysis, the host CLI inspects files and passes structured lessons to `project`.
+- The script does not call remote models or execute arbitrary skills. It scans host CLI history only when the user explicitly invokes `analyze-history`, and scans git repositories only for the explicit `scan-iterations` workflow. For semantic project analysis, the host CLI inspects files and passes structured lessons to `project`.
 
 ## Fallback
 

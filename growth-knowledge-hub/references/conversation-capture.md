@@ -19,7 +19,14 @@ python scripts/gkh.py capture --input capture.json
   "insights": ["The unique value is durable growth knowledge, not another agent runtime."],
   "open_questions": ["Which host CLI install locations should be documented first?"],
   "next_actions": ["Create the growth-knowledge-hub skill package."],
-  "growth_tracks": ["agent_engineering", "knowledge_management"],
+  "growth_tasks": [
+    {
+      "title": "为 growth-knowledge-hub 编写 SKILL.md，定义 3 条行为规则",
+      "stage": "L2",
+      "done_definition": "SKILL.md 存在且包含至少 3 条可验证的行为规则",
+      "rationale": "当前对话展示了架构设计能力，但缺少 prompt 工程实践"
+    }
+  ],
   "tags": ["skill", "llm-wiki"]
 }
 ```
@@ -34,3 +41,14 @@ python scripts/gkh.py capture --input capture.json
 - Do not capture one-off troubleshooting chatter, temporary command output, or casual conversation unless it produced a durable decision, lesson, or next action.
 - After a successful write, tell the user the written page path, the main sections saved, and any redaction reported by the script.
 - If the script returns an error, do not say the capture succeeded. Show the error and revise the JSON before retrying.
+
+### Growth Tasks Generation
+
+- Read `references/growth-stage-model.md` before generating tasks.
+- Assess which stage (L1-L4) the conversation reflects based on what the user was doing.
+- Generate 1-3 tasks that push toward the **next** stage, not the current one.
+- Each task must be concrete and actionable: something the user can do in their next session.
+- `done_definition` must be verifiable — something you can check yes/no.
+- `rationale` should explain why this task is relevant now, based on the conversation.
+- If the conversation is trivial (simple bug fix, one-line change), skip `growth_tasks` entirely.
+- If a similar task already exists in `wiki/growth/tasks/` with status `active`, do not include it — the script will skip it anyway, but don't waste the user's attention.
