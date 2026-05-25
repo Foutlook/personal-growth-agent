@@ -14,6 +14,7 @@ Use this skill for:
 - Saving external materials, articles, notes, or third-party knowledge summaries.
 - Writing growth reviews, bottlenecks, knowledge gaps, and next actions.
 - Recalling prior decisions, lessons, summaries, tasks, and growth notes.
+- Scanning project git repositories for iteration records and team patterns.
 - Building a local no-server dashboard for the knowledge base.
 
 Do not use this skill to replace the host CLI's chat, tool calling, file reading, or model routing. The host CLI remains the agent; this skill is the memory layer.
@@ -30,6 +31,7 @@ Read only the reference needed for the user's current intent:
 | "整理这篇文章", "保存资料", "导入知识库摘要", "ingest this material" | `references/material-ingest.md` |
 | "做一次复盘", "本周成长回顾", "下一步怎么练" | `references/growth-review.md` |
 | "我之前怎么想的", "查一下我的知识库", "recall prior decisions" | `references/recall.md` |
+| "扫描项目迭代", "迭代记录", "release 分支历史", "scan iterations" | `references/scan-iterations.md` |
 | Need exact local Wiki layout or metadata rules | `references/llm-wiki-schema.md` |
 | Local project analysis request | `references/project-analysis.md` |
 
@@ -55,6 +57,13 @@ For write workflows, use this loop:
    - **Redactions**: if any, list the types (e.g., secret, email, url); if none, say "无脱敏项"
    - **Recall**: `search --query "<suggested-keyword>"` or `context --query "<suggested-keyword>"`
    - Example: "已写入 `wiki/growth/reviews/skill-架构设计讨论.md`，包含摘要、决策、洞察和下一步。无脱敏项。可通过 `search --query 'skill 架构'` 召回。"
+
+For scan-iterations workflow:
+
+1. Read `references/scan-iterations.md` for parameters and output format.
+2. Run: `python scripts/gkh.py scan-iterations --dir <path> --branch-prefix release --output wiki`
+3. Report: project count, iteration count, any warnings (skipped branches, non-git dirs).
+4. If `--output wiki` was used, tell the user the page paths written.
 
 For recall workflows:
 
@@ -97,6 +106,7 @@ python scripts/gkh.py capture --input capture.json
 python scripts/gkh.py ingest --input material.json
 python scripts/gkh.py review --input review.json
 python scripts/gkh.py project --input project.json
+python scripts/gkh.py scan-iterations --dir /path/to/projects --branch-prefix release --output wiki
 python scripts/gkh.py search --query "成长知识中枢"
 python scripts/gkh.py context --query "agent 架构" --limit 5
 python scripts/gkh.py read --path "wiki/growth/reviews/example.md"

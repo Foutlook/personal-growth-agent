@@ -50,6 +50,9 @@ def main(argv: list[str] | None = None) -> int:
     review_parser = subparsers.add_parser("review")
     review_parser.add_argument("--input", required=True, type=Path)
 
+    project_parser = subparsers.add_parser("project")
+    project_parser.add_argument("--input", required=True, type=Path)
+
     search_parser = subparsers.add_parser("search")
     search_parser.add_argument("--query", required=True)
     search_parser.add_argument("--limit", type=int, default=10)
@@ -60,6 +63,12 @@ def main(argv: list[str] | None = None) -> int:
     context_parser = subparsers.add_parser("context")
     context_parser.add_argument("--query", required=True)
     context_parser.add_argument("--limit", type=int, default=5)
+
+    scan_parser = subparsers.add_parser("scan-iterations")
+    scan_parser.add_argument("--repo", type=Path, default=None, help="Single project repository path.")
+    scan_parser.add_argument("--dir", type=Path, default=None, help="Directory containing multiple project repositories.")
+    scan_parser.add_argument("--branch-prefix", default="release", help="Branch name prefix to scan (default: release).")
+    scan_parser.add_argument("--output", choices=["stdout", "wiki"], default="stdout", help="Output target.")
 
     subparsers.add_parser("index")
     subparsers.add_parser("dashboard")
@@ -80,6 +89,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "review":
             result = write_review(wiki_root, read_input(args.input))
             return print_json(result)
+        if args.command == "project":
+            result = write_project(root=wiki_root, data=read_input(args.input))
+            return print_json(result)
         if args.command == "search":
             result = search_wiki(wiki_root, args.query, args.limit)
             return print_json({"status": "ok", "items": result})
@@ -92,6 +104,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "index":
             index = rebuild_index(wiki_root)
             return print_json({"status": "ok", "indexPath": str(wiki_root / "data" / "index.json"), "count": len(index)})
+        if args.command == "scan-iterations":
+            result = scan_iterations_command(args.repo, args.dir, args.branch_prefix, args.output, wiki_root)
+            return print_json(result)
         if args.command == "dashboard":
             result = build_dashboard(home, wiki_root)
             return print_json(result)
@@ -315,6 +330,68 @@ def write_review(root: Path, data: dict[str, Any]) -> dict[str, Any]:
     rebuild_index(root)
     writes = [write_to_dict(write), *[write_to_dict(item) for item in task_writes]]
     return {"status": "ok", "kind": "review", "rawSource": raw_source, "writes": writes, "redactions": findings}
+
+
+def write_project(root: Path, data: dict[str, Any]) -> dict[str, Any]:
+    init_wiki(root)
+    project = required_text(data, "project")
+    title = required_text(data, "title")
+    summary = string_list(data, "summary")
+    architecture = string_list(data, "architecture", required=False)
+    decisions = string_list(data, "decisions", required=False)
+    lessons = string_list(data, "lessons", required=False)
+    risks = string_list(data, "risks", required=False)
+    next_actions = string_list(data, "next_actions", required=False)
+    source_paths = string_list(data, "source_paths", required=False)
+    tags = string_list(data, "tags", required=False)
+    source_text = "\n".join(summary + architecture + decisions + lessons + risks + next_actions + source_paths)
+    safe_text, sensitivity, findings = redact_or_reject(source_text)
+    summary = redact_items(summary)
+    architecture = redact_items(architecture)
+    decisions = redact_items(decisions)
+    lessons = redact_items(lessons)
+    risks = redact_items(risks)
+    next_actions = redact_items(next_actions)
+    source_paths = redact_items(source_paths)
+    project_slug = slug(project)
+    raw_source = write_raw(
+        root,
+        "project_analysis",
+        "projects",
+        title,
+        project,
+        safe_text,
+        sensitivity,
+        tags,
+    )
+    common_metadata = {
+        "status": "ready",
+        "project": project,
+        "source_raw_ids": [raw_source["rawSourceId"]],
+        "source_paths": source_paths,
+        "captured_date": now_iso(),
+        "sensitivity": sensitivity,
+        "evidence_status": "host_generated",
+        "tags": tags,
+    }
+    pages = [
+        ("overview", "project_overview", title, [("摘要", summary), ("下一步", next_actions)]),
+        ("architecture", "project_architecture", f"{project} 架构", [("架构", architecture)]),
+        ("decisions", "project_decisions", f"{project} 决策", [("决策", decisions)]),
+        ("lessons", "project_lessons", f"{project} 经验", [("经验", lessons)]),
+        ("risks", "project_risks", f"{project} 风险", [("风险", risks)]),
+    ]
+    writes = []
+    for page_name, page_type, page_title, sections in pages:
+        body = frontmatter({"type": page_type, **common_metadata})
+        body += f"\n# {page_title}\n\n"
+        for section_title, section_items in sections:
+            body += section(section_title, section_items)
+        body += section("来源路径", source_paths)
+        write = write_wiki_page(root, f"wiki/projects/{project_slug}/{page_name}.md", body, [raw_source["rawSourceId"]])
+        writes.append(write)
+    rebuild_index(root)
+    return {"status": "ok", "kind": "project", "rawSource": raw_source, "writes": [write_to_dict(write) for write in writes], "redactions": findings}
 
 
 def required_text(data: dict[str, Any], key: str) -> str:
@@ -805,6 +882,382 @@ def sha256_text(text: str) -> str:
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+# ---------------------------------------------------------------------------
+# scan-iterations
+# ---------------------------------------------------------------------------
+
+CONVENTIONAL_RE = re.compile(r"^(feat|fix|refactor|docs|test|chore|perf|ci)(\(.+\))?: .+")
+FIXUP_RE = re.compile(r"^(fixup|revert)[!:]?\s", re.IGNORECASE)
+STOP_WORDS = frozenset({
+    "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
+    "have", "has", "had", "do", "does", "did", "will", "would", "shall",
+    "should", "may", "might", "can", "could", "to", "of", "in", "for",
+    "on", "with", "at", "by", "from", "as", "into", "through", "during",
+    "before", "after", "above", "below", "between", "out", "off", "over",
+    "under", "again", "further", "then", "once", "and", "but", "or", "nor",
+    "not", "so", "very", "just", "about", "up", "this", "that", "these",
+    "those", "it", "its", "add", "update", "remove", "new", "fix",
+    "fixes", "updated", "added", "removed", "merged", "branch",
+})
+
+
+@dataclass(frozen=True)
+class AuthorStats:
+    name: str
+    commits: int
+    additions: int
+    deletions: int
+
+
+@dataclass(frozen=True)
+class IterationRecord:
+    branch: str
+    date_label: str
+    main_topics: str
+    author_count: int
+    additions: int
+    deletions: int
+    changed_files: int
+    avg_files_per_commit: float
+    stability: str
+    conventionality: str
+    authors: tuple[AuthorStats, ...]
+
+
+def scan_iterations_command(
+    repo: Path | None,
+    scan_dir: Path | None,
+    branch_prefix: str,
+    output: str,
+    wiki_root: Path,
+) -> dict[str, Any]:
+    if repo is None and scan_dir is None:
+        raise ValueError("provide --repo or --dir")
+    warnings: list[str] = []
+    results: list[dict[str, Any]] = []
+    repos = collect_repos(repo, scan_dir, warnings)
+    for repo_path in repos:
+        project_name = repo_path.name
+        try:
+            records = scan_single_repo(repo_path, branch_prefix, warnings)
+        except Exception as exc:
+            warnings.append(f"{project_name}: {exc}")
+            continue
+        if output == "wiki":
+            write_iterations_to_wiki(wiki_root, project_name, records)
+        results.append({
+            "project": project_name,
+            "repo": str(repo_path),
+            "iterations": [iteration_to_dict(r) for r in records],
+        })
+    return {"status": "ok", "projects": results, "warnings": warnings}
+
+
+def collect_repos(repo: Path | None, scan_dir: Path | None, warnings: list[str]) -> list[Path]:
+    if repo is not None:
+        if not is_git_repo(repo):
+            raise ValueError(f"not a git repository: {repo}")
+        return [repo.resolve()]
+    assert scan_dir is not None
+    scan_dir = scan_dir.resolve()
+    if not scan_dir.is_dir():
+        raise ValueError(f"not a directory: {scan_dir}")
+    repos = []
+    for child in sorted(scan_dir.iterdir()):
+        if child.is_dir() and is_git_repo(child):
+            repos.append(child)
+        elif child.is_dir():
+            warnings.append(f"{child.name}: not a git repository, skipped")
+    if not repos:
+        raise ValueError(f"no git repositories found in {scan_dir}")
+    return repos
+
+
+def is_git_repo(path: Path) -> bool:
+    return (path / ".git").exists()
+
+
+def scan_single_repo(repo_path: Path, prefix: str, warnings: list[str]) -> list[IterationRecord]:
+    branches = discover_branches(repo_path, prefix, warnings)
+    if not branches:
+        warnings.append(f"{repo_path.name}: no {prefix}/* branches found")
+        return []
+    default_branch = find_default_branch(repo_path)
+    records: list[IterationRecord] = []
+    for i, branch in enumerate(branches):
+        base = default_branch if i == 0 else branches[i - 1]
+        record = build_iteration_record(repo_path, base, branch, prefix)
+        records.append(record)
+    return records
+
+
+def discover_branches(repo_path: Path, prefix: str, warnings: list[str]) -> list[str]:
+    # Try remote branches first, fall back to local branches
+    output = git_cmd(repo_path, ["branch", "-r", "--list", f"origin/{prefix}/*"], check=False)
+    raw_branches = []
+    for line in output.splitlines():
+        name = line.strip()
+        if not name or "->" in name:
+            continue
+        raw_branches.append(name.removeprefix("origin/"))
+    if not raw_branches:
+        output = git_cmd(repo_path, ["branch", "--list", f"{prefix}/*"], check=False)
+        for line in output.splitlines():
+            name = line.strip().lstrip("* ")
+            if name:
+                raw_branches.append(name)
+    branches = []
+    for branch_name in raw_branches:
+        date_str = extract_date(branch_name, prefix)
+        if date_str is None:
+            warnings.append(f"{repo_path.name}: branch '{branch_name}' has no YYYYMMDD date, skipped")
+            continue
+        branches.append(branch_name)
+    branches.sort(key=lambda b: extract_date(b, prefix) or "")
+    return branches
+
+
+def extract_date(branch_name: str, prefix: str) -> str | None:
+    suffix = branch_name.removeprefix(f"{prefix}/")
+    match = re.search(r"(\d{8})", suffix)
+    return match.group(1) if match else None
+
+
+def find_default_branch(repo_path: Path) -> str:
+    for candidate in ("main", "master"):
+        result = git_cmd(repo_path, ["rev-parse", "--verify", candidate], check=False)
+        if result:
+            return candidate
+    raise ValueError("no main or master branch found")
+
+
+def build_iteration_record(repo_path: Path, base: str, branch: str, prefix: str) -> IterationRecord:
+    date_str = extract_date(branch, prefix) or ""
+    date_label = f"{date_str[4:6]}.{date_str[6:8]}" if len(date_str) == 8 else date_str
+    diff_range = f"{base}..{branch}"
+    stats = get_diff_stats(repo_path, diff_range)
+    authors = get_author_stats(repo_path, diff_range)
+    messages = get_commit_messages(repo_path, diff_range)
+    changed_files_list = get_changed_files(repo_path, diff_range)
+    main_topics = extract_topics(messages, changed_files_list)
+    total_commits = sum(a.commits for a in authors)
+    avg_files = round(stats["files"] / total_commits, 1) if total_commits > 0 else 0.0
+    stability = rate_stability(messages)
+    conventionality = rate_conventionality(messages)
+    return IterationRecord(
+        branch=branch,
+        date_label=date_label,
+        main_topics=main_topics,
+        author_count=len(authors),
+        additions=stats["additions"],
+        deletions=stats["deletions"],
+        changed_files=stats["files"],
+        avg_files_per_commit=avg_files,
+        stability=stability,
+        conventionality=conventionality,
+        authors=tuple(authors),
+    )
+
+
+def get_diff_stats(repo_path: Path, diff_range: str) -> dict[str, int]:
+    output = git_cmd(repo_path, ["diff", "--shortstat", diff_range])
+    additions = 0
+    deletions = 0
+    files = 0
+    match = re.search(r"(\d+) files? changed", output)
+    if match:
+        files = int(match.group(1))
+    match = re.search(r"(\d+) insertions?", output)
+    if match:
+        additions = int(match.group(1))
+    match = re.search(r"(\d+) deletions?", output)
+    if match:
+        deletions = int(match.group(1))
+    return {"additions": additions, "deletions": deletions, "files": files}
+
+
+def get_author_stats(repo_path: Path, diff_range: str) -> list[AuthorStats]:
+    output = git_cmd(repo_path, ["shortlog", "-sn", "--no-merges", diff_range])
+    authors: list[AuthorStats] = []
+    for line in output.splitlines():
+        line = line.strip()
+        match = re.match(r"(\d+)\s+(.+)", line)
+        if match:
+            commits = int(match.group(1))
+            name = match.group(2).strip()
+            authors.append(AuthorStats(name=name, commits=commits, additions=0, deletions=0))
+    numstat = git_cmd(repo_path, ["log", "--numstat", "--format=", "--no-merges", diff_range])
+    author_lines: dict[str, tuple[int, int]] = {}
+    current_author = ""
+    for line in numstat.splitlines():
+        if not line.strip():
+            continue
+        if line.startswith("Author:"):
+            current_author = line.removeprefix("Author:").strip()
+            continue
+        parts = line.split("\t")
+        if len(parts) == 3:
+            add = int(parts[0]) if parts[0] != "-" else 0
+            dele = int(parts[1]) if parts[1] != "-" else 0
+            prev = author_lines.get(current_author, (0, 0))
+            author_lines[current_author] = (prev[0] + add, prev[1] + dele)
+    result: list[AuthorStats] = []
+    for author in authors:
+        add, dele = author_lines.get(author.name, (0, 0))
+        result.append(AuthorStats(name=author.name, commits=author.commits, additions=add, deletions=dele))
+    return result
+
+
+def get_commit_messages(repo_path: Path, diff_range: str) -> list[str]:
+    output = git_cmd(repo_path, ["log", "--format=%s", "--no-merges", diff_range])
+    return [line.strip() for line in output.splitlines() if line.strip()]
+
+
+def get_changed_files(repo_path: Path, diff_range: str) -> list[str]:
+    output = git_cmd(repo_path, ["diff", "--name-only", diff_range])
+    return [line.strip() for line in output.splitlines() if line.strip()]
+
+
+def extract_topics(messages: list[str], files: list[str]) -> str:
+    word_freq: dict[str, int] = {}
+    for msg in messages:
+        for word in re.split(r"[\s\-_/]+", msg):
+            w = word.lower().strip(".,;:!?()[]{}\"'")
+            if len(w) >= 2 and w not in STOP_WORDS:
+                word_freq[w] = word_freq.get(w, 0) + 1
+    keywords = sorted(word_freq.items(), key=lambda x: -x[1])[:3]
+    keyword_str = ", ".join(k for k, _ in keywords)
+    dir_freq: dict[str, int] = {}
+    for f in files:
+        parts = Path(f).parts
+        if len(parts) >= 2:
+            dir_name = parts[0]
+            dir_freq[dir_name] = dir_freq.get(dir_name, 0) + 1
+    hot_dirs = sorted(dir_freq.items(), key=lambda x: -x[1])[:2]
+    hot_str = ", ".join(d for d, _ in hot_dirs)
+    parts = []
+    if keyword_str:
+        parts.append(keyword_str)
+    if hot_str:
+        parts.append(f"[{hot_str}]")
+    return "; ".join(parts) or "-"
+
+
+def rate_stability(messages: list[str]) -> str:
+    if not messages:
+        return "★★★"
+    fixup_count = sum(1 for m in messages if FIXUP_RE.match(m))
+    ratio = fixup_count / len(messages)
+    if ratio < 0.05:
+        return "★★★★★"
+    if ratio < 0.10:
+        return "★★★★"
+    if ratio < 0.20:
+        return "★★★"
+    if ratio < 0.30:
+        return "★★"
+    return "★"
+
+
+def rate_conventionality(messages: list[str]) -> str:
+    if not messages:
+        return "★★★"
+    conv_count = sum(1 for m in messages if CONVENTIONAL_RE.match(m))
+    ratio = conv_count / len(messages)
+    if ratio >= 0.80:
+        return "★★★★★"
+    if ratio >= 0.60:
+        return "★★★★"
+    if ratio >= 0.40:
+        return "★★★"
+    if ratio >= 0.20:
+        return "★★"
+    return "★"
+
+
+def iteration_to_dict(record: IterationRecord) -> dict[str, Any]:
+    return {
+        "branch": record.branch,
+        "date_label": record.date_label,
+        "main_topics": record.main_topics,
+        "author_count": record.author_count,
+        "additions": record.additions,
+        "deletions": record.deletions,
+        "changed_files": record.changed_files,
+        "avg_files_per_commit": record.avg_files_per_commit,
+        "stability": record.stability,
+        "conventionality": record.conventionality,
+        "authors": [{"name": a.name, "commits": a.commits, "additions": a.additions, "deletions": a.deletions} for a in record.authors],
+    }
+
+
+def write_iterations_to_wiki(wiki_root: Path, project_name: str, records: list[IterationRecord]) -> None:
+    init_wiki(wiki_root)
+    md = format_iterations_markdown(project_name, records)
+    project_slug = slug(project_name)
+    path = wiki_root / "wiki" / "projects" / project_slug / "iterations.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(md, encoding="utf-8")
+    append_json_list(
+        wiki_root / "data" / "wiki-write-log.json",
+        {
+            "id": stable_id("wiki_write", str(path), sha256_text(md)),
+            "targetPath": str(path.relative_to(wiki_root)),
+            "path": str(path),
+            "operation": "update" if path.exists() else "create",
+            "sourceRawIds": [],
+            "sourceEvidenceIds": [],
+            "compiler": "growth-knowledge-hub",
+            "provider": "host_cli",
+            "model": "",
+            "contentHash": sha256_text(md),
+            "writtenAt": now_iso(),
+        },
+    )
+
+
+def format_iterations_markdown(project_name: str, records: list[IterationRecord]) -> str:
+    lines = [f"# {project_name} 迭代记录", ""]
+    lines.append("| 迭代分支 | 时段 | 主要事项 | 提交人数 | 新增行 | 删除行 | 改动文件 | 平均文件/提交 | 稳定性 | 规范性 |")
+    lines.append("|---------|------|---------|---------|-------|-------|---------|-------------|-------|-------|")
+    for r in records:
+        lines.append(
+            f"| {r.branch} | {r.date_label} | {r.main_topics} | {r.author_count} "
+            f"| +{r.additions:,} | -{r.deletions:,} | {r.changed_files} "
+            f"| {r.avg_files_per_commit} | {r.stability} | {r.conventionality} |"
+        )
+    lines.append("")
+    for r in records:
+        if not r.authors:
+            continue
+        lines.append(f"## {r.branch} 提交明细")
+        lines.append("")
+        lines.append("| 作者 | 提交数 | 新增行 | 删除行 |")
+        lines.append("|------|-------|-------|-------|")
+        for a in r.authors:
+            lines.append(f"| {a.name} | {a.commits} | +{a.additions:,} | -{a.deletions:,} |")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def git_cmd(repo_path: Path, args: list[str], check: bool = True) -> str:
+    import subprocess
+
+    result = subprocess.run(
+        ["git", *args],
+        cwd=str(repo_path),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if result.returncode != 0:
+        if check:
+            raise RuntimeError(f"git {' '.join(args)} failed: {result.stderr.strip()}")
+        return ""
+    return result.stdout
 
 
 if __name__ == "__main__":
